@@ -31,6 +31,27 @@ class SchemaGridLayoutTest {
     @Test fun floatingPanelWithLargerTextStillFits() = checkGrid(280, 184, false, 1.3f)
     @Test fun landscapeModesFitInsteadOfSqueezingEveryModeIntoOneRow() = checkGrid(640, 180, true, 1.3f)
 
+    @Test fun tallTabletPanelDoesNotStretchModeCards() {
+        rule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                MaterialTheme {
+                    SchemaListView(schemas.take(4), "mode2", Color.Black, Color.Blue, Color.White, Color.DarkGray,
+                        onSelectSchema = {}, onReorderSchemas = {}, modifier = Modifier.size(1000.dp, 600.dp).testTag("schema-panel"))
+                }
+            }
+        }
+        val cards = schemas.take(4).map { rule.onNodeWithTag("schema-tile:${it.schemaId}").fetchSemanticsNode().boundsInRoot }
+        cards.forEach { assertTrue("tablet cards must stay compact", it.height <= 120f) }
+        assertEquals(cards[0].top, cards[1].top, 1f)
+        assertEquals(cards[2].top, cards[3].top, 1f)
+        assertEquals(cards[0].left, cards[2].left, 1f)
+        assertTrue(cards[2].top > cards[0].bottom)
+        val panel = rule.onNodeWithTag("schema-panel").fetchSemanticsNode().boundsInRoot
+        assertEquals("equal space above and below the group, excluding the header",
+            cards[0].top - panel.top - 40f, panel.bottom - cards[3].bottom, 1f)
+        cards.forEachIndexed { index, a -> cards.drop(index + 1).forEach { b -> assertFalse(a.overlaps(b)) } }
+    }
+
     @Test fun pageBoundaryKeepsTheSameGapWhileDragging() {
         rule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(1f)) {
@@ -64,7 +85,7 @@ class SchemaGridLayoutTest {
             }
         }
         val panel = rule.onNodeWithTag("schema-panel").fetchSemanticsNode().boundsInRoot
-        val firstPageCount = if (landscape) 5 else 4
+        val firstPageCount = 4
         val bounds = schemas.take(firstPageCount).map { schema ->
             val card = rule.onNodeWithTag("schema-tile:${schema.schemaId}").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
             assertTrue(card.top >= panel.top && card.bottom <= panel.bottom)
@@ -74,7 +95,7 @@ class SchemaGridLayoutTest {
             card
         }
         bounds.forEachIndexed { index, a -> bounds.drop(index + 1).forEach { b -> assertFalse(a.overlaps(b)) } }
-        if (!landscape) rule.onNodeWithTag("schema-pages", useUnmergedTree = true).performTouchInput { swipeLeft() }
+        rule.onNodeWithTag("schema-pages", useUnmergedTree = true).performTouchInput { swipeLeft() }
         rule.onNodeWithTag("schema-tile:mode4").assertIsDisplayed().performClick()
         rule.runOnIdle { assertEquals("mode4", selected) }
         rule.onNodeWithText("调整顺序").performClick()

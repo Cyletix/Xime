@@ -44,7 +44,7 @@ class LanguageKeyButtonTest {
                 LocalKeyboardInputActions provides KeyboardInputActions(
                     schemas = listOf(
                         SchemaInfo("first", "同名方案", "", "", ""),
-                        SchemaInfo("second", "同名方案", "", "", ""),
+                        SchemaInfo("second", "日语模式", "", "", "", language = com.kingzcheung.xime.settings.InputLanguage.JAPANESE),
                     ),
                     currentInputModeId = "first",
                     onSwitchSchema = { events += "schema:$it" },
@@ -97,6 +97,8 @@ class LanguageKeyButtonTest {
     @Test fun currentModeIsHighlightedBeforeDragging() {
         setKey(); holdKey()
         rule.onNodeWithTag("language-schema:first").assertIsSelected()
+        rule.onNodeWithText("中文").assertIsDisplayed()
+        rule.onNodeWithText("日语").assertIsDisplayed()
         rule.onNodeWithTag("language-key").performTouchInput { cancel() }
     }
 

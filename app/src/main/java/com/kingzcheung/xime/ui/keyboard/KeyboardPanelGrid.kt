@@ -18,18 +18,24 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun <T> KeyboardPanelGrid(
     items: List<T>, isLandscape: Boolean, textColor: Color, pagerTag: String,
-    modifier: Modifier = Modifier, content: @Composable (T, Modifier) -> Unit,
+    modifier: Modifier = Modifier, compactCards: Boolean = false, content: @Composable (T, Modifier) -> Unit,
 ) {
     if (items.isEmpty()) return
     BoxWithConstraints(modifier.padding(horizontal = if (isLandscape) 16.dp else 12.dp, vertical = 8.dp)) {
-        val columns = if (isLandscape && maxWidth >= 560.dp) 8 else 4
+        val twoRowModes = compactCards && items.size > 2 && maxHeight >= 240.dp
+        val columns = if (twoRowModes) 2 else if (compactCards) minOf(items.size, 4) else if (isLandscape && maxWidth >= 560.dp) 8 else 4
         val spacing = 8.dp
         val indicatorHeight = 16.dp
         val minimumRowHeight = (34 + 28 * LocalDensity.current.fontScale).dp
-        val rows = if (columns == 4 && maxHeight - indicatorHeight >= minimumRowHeight * 2 + spacing) 2 else 1
+        val rows = if (twoRowModes) 2 else if ((if (compactCards) items.size > columns else columns == 4) &&
+            maxHeight - indicatorHeight >= minimumRowHeight * 2 + spacing) 2 else 1
         val pages = items.chunked(rows * columns)
         val pagerState = rememberPagerState(pageCount = { pages.size })
-        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        val pageIndicatorHeight = if (compactCards && pages.size == 1) 0.dp else indicatorHeight
+        val gridHeight = if (compactCards) minOf(maxHeight,
+            maxOf(120.dp, minimumRowHeight) * rows + spacing * (rows - 1) + pageIndicatorHeight) else maxHeight
+        val gridWidth = if (compactCards) minOf(maxWidth, 180.dp * columns + spacing * (columns - 1)) else maxWidth
+        Column(Modifier.align(Alignment.Center).width(gridWidth).height(gridHeight), horizontalAlignment = Alignment.CenterHorizontally) {
             HorizontalPager(pagerState, pageSpacing = spacing, modifier = Modifier.fillMaxWidth().weight(1f).testTag(pagerTag)) { page ->
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(spacing)) {
                     repeat(rows) { row ->
@@ -43,7 +49,7 @@ internal fun <T> KeyboardPanelGrid(
                     }
                 }
             }
-            Row(Modifier.height(indicatorHeight), horizontalArrangement = Arrangement.spacedBy(6.dp),
+            Row(Modifier.height(pageIndicatorHeight), horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (pages.size > 1) repeat(pages.size) { index ->
                     Box(Modifier.size(if (index == pagerState.currentPage) 8.dp else 6.dp)

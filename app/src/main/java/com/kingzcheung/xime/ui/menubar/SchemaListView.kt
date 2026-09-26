@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -34,6 +36,8 @@ import androidx.compose.ui.res.painterResource
 import com.kingzcheung.xime.R
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextOverflow
 import com.kingzcheung.xime.ui.keyboard.KeyboardPanelGrid
 import androidx.compose.ui.text.font.FontWeight
@@ -55,7 +59,7 @@ fun SchemaListView(
     onReorderSchemas: ((List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    var editingOrder by remember { mutableStateOf(false) }
+    var editingOrder by remember(com.kingzcheung.xime.settings.InputModes.languageOf(currentSchemaId, schemas)) { mutableStateOf(false) }
     // 功能 item 背景：与键盘按键背景一致（keyBgColor，浅色纯白、深色跟随 keyboard.colors）
     val itemBgColor = keyBgColor
     val textColor = keyTextColor
@@ -68,12 +72,13 @@ fun SchemaListView(
             .background(backgroundColor),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        if (onReorderSchemas != null) {
+        run {
             Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(if (editingOrder) "长按拖动调整顺序" else "输入模式", color = textColor, fontSize = 13.sp)
-                TextButton(onClick = { editingOrder = !editingOrder }) {
+                Text(if (editingOrder) "长按拖动调整顺序" else
+                    "${com.kingzcheung.xime.settings.InputModes.languageOf(currentSchemaId, schemas).displayName}输入模式", color = textColor, fontSize = 13.sp)
+                if (onReorderSchemas != null && schemas.size > 1) TextButton(onClick = { editingOrder = !editingOrder }) {
                     Text(if (editingOrder) "完成" else "调整顺序", color = accentColor)
                 }
             }
@@ -89,10 +94,13 @@ fun SchemaListView(
                 Text("没有可用的输入方案", color = subTextColor, fontSize = 13.sp)
             }
         } else {
-            KeyboardPanelGrid(schemas, isLandscape, textColor, "schema-pages", Modifier.fillMaxWidth().weight(1f)) { schema, cellModifier ->
-                SchemaGridItem(schema, schema.schemaId == currentSchemaId, itemBgColor, textColor,
-                    accentColor = accentColor, onSelect = { onSelectSchema(schema.schemaId) },
-                    modifier = cellModifier.testTag("schema-tile:${schema.schemaId}"), isLandscape = isLandscape)
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                KeyboardPanelGrid(schemas, isLandscape, textColor, "schema-pages",
+                    Modifier.fillMaxWidth().fillMaxHeight(), compactCards = true) { schema, cellModifier ->
+                    SchemaGridItem(schema, schema.schemaId == currentSchemaId, itemBgColor, textColor,
+                        accentColor = accentColor, onSelect = { onSelectSchema(schema.schemaId) },
+                        modifier = cellModifier.testTag("schema-tile:${schema.schemaId}"), isLandscape = isLandscape)
+                }
             }
         }
     }
@@ -114,7 +122,8 @@ private fun SchemaGridItem(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(bgColor)
+            .background(if (isSelected) androidx.compose.ui.graphics.lerp(bgColor, accentColor, 0.18f) else bgColor)
+            .semantics { selected = isSelected }
             .clickable { onSelect() }
             .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -126,24 +135,24 @@ private fun SchemaGridItem(
                     imageVector = Icons.TwoTone.Gesture,
                     contentDescription = schema.name,
                     tint = if (isSelected) accentColor else textColor,
-                    modifier = Modifier.size(if (isLandscape) 18.dp else 24.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             isT9Schema(schema.schemaId) ->
                 Icon(
                     painter = painterResource(R.drawable.keyboard_t9),
                     contentDescription = schema.name,
                     tint = if (isSelected) accentColor else textColor,
-                    modifier = Modifier.size(if (isLandscape) 18.dp else 24.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             else ->
                 Icon(
                     imageVector = Icons.TwoTone.KeyboardAlt,
                     contentDescription = schema.name,
                     tint = if (isSelected) accentColor else textColor,
-                    modifier = Modifier.size(if (isLandscape) 18.dp else 24.dp)
+                    modifier = Modifier.size(24.dp)
                 )
         }
-        Spacer(modifier = Modifier.height(if (isLandscape) 2.dp else 4.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = schema.name,
             color = if (isSelected) accentColor else textColor,

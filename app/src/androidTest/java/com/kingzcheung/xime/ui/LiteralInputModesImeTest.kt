@@ -130,20 +130,7 @@ class LiteralInputModesImeTest {
     }
 
     private fun chooseMode(id: String) {
-        val globe = rule.onAllNodesWithTag("language-key-control", useUnmergedTree = true).onLast()
-        globe.performTouchInput { down(center) }
-        rule.waitUntil(3000) { rule.onAllNodesWithTag("language-schema:$id").fetchSemanticsNodes().isNotEmpty() }
-        val choice = rule.onNodeWithTag("language-schema:$id").performScrollTo().fetchSemanticsNode()
-        val key = globe.fetchSemanticsNode()
-        globe.performTouchInput {
-            moveTo(choice.positionOnScreen + Offset(choice.size.width / 2f, choice.size.height / 2f) - key.positionOnScreen)
-            up()
-        }
-        rule.waitUntil(10_000) {
-            if (id == InputModes.ENGLISH) engine.isAsciiMode()
-            else engine.getCurrentSchema() == id && !engine.isAsciiMode()
-        }
-        rule.waitForIdle()
+        rule.chooseModeThroughLanguageAndPanel(id)
     }
 
     private fun tap(label: String) {

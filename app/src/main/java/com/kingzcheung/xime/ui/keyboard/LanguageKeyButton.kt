@@ -44,10 +44,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -81,7 +83,7 @@ internal fun languageMenuSelection(
     return schemas.getOrNull(index)?.schemaId
 }
 
-/** 统一语言键：点按切换、长按选方案；不接受方案定义的文字预览和滑动菜单。 */
+/** 统一语言键：点按切换英文、长按选语言；不接受方案定义的文字预览和滑动菜单。 */
 @Composable
 fun LanguageKeyButton(
     onClick: () -> Unit,
@@ -111,7 +113,10 @@ fun LanguageKeyButton(
     shadowShapeRadius: Dp = 8.dp,
 ) {
     val actions = LocalKeyboardInputActions.current
-    val schemas by rememberUpdatedState(com.kingzcheung.xime.settings.InputModes.available(actions.schemas))
+    val context = LocalContext.current
+    val schemas by rememberUpdatedState(com.kingzcheung.xime.settings.InputModes.languageChoices(
+        actions.schemas, actions.currentInputModeId,
+        com.kingzcheung.xime.settings.InputModes.rememberedModes(context, actions.schemas)))
     val switchSchema by rememberUpdatedState(actions.onSwitchSchema)
     val hasMenu = schemas.isNotEmpty() && switchSchema != null
     val scope = rememberCoroutineScope()
@@ -126,7 +131,7 @@ fun LanguageKeyButton(
     var selectedId by remember { mutableStateOf<String?>(null) }
     val scroll = rememberScrollState()
     val density = LocalDensity.current
-    val rowHeight = with(density) { 48.dp.toPx() }
+    val rowHeight = with(density) { 64.dp.toPx() }
     val edgeSize = with(density) { 20.dp.toPx() }
     val scrollStep = with(density) { 8.dp.toPx() }
 
@@ -246,6 +251,8 @@ fun LanguageKeyButton(
                     modifier = Modifier.width(minOf(280, LocalConfiguration.current.screenWidthDp - 24).dp),
                 ) {
                     Column(Modifier.padding(8.dp)) {
+                        Text("语言", style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
                         Column(
                             Modifier.heightIn(max = minOf(264, LocalConfiguration.current.screenHeightDp / 2).dp)
                                 .onGloballyPositioned {
@@ -255,25 +262,27 @@ fun LanguageKeyButton(
                                 .verticalScroll(scroll)
                         ) {
                             menuSchemas.forEach { schema ->
-                                val duplicateName = menuSchemas.count { it.name == schema.name } > 1
+                                val modeName = if (schema.schemaId == com.kingzcheung.xime.settings.InputModes.ENGLISH) "English"
+                                    else actions.schemas.firstOrNull { it.schemaId == schema.schemaId }?.name ?: schema.schemaId
                                 Column(
-                                    Modifier.fillMaxWidth().height(48.dp)
+                                    Modifier.fillMaxWidth().height(64.dp)
                                         .testTag("language-schema:${schema.schemaId}")
-                                        .semantics { selected = (selectedId ?: actions.currentInputModeId) == schema.schemaId }
+                                        .semantics {
+                                            selected = (selectedId ?: actions.currentInputModeId) == schema.schemaId
+                                            contentDescription = "选择${schema.name}"
+                                        }
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(when (schema.schemaId) {
-                                            selectedId -> MaterialTheme.colorScheme.secondaryContainer
-                                            actions.currentInputModeId -> MaterialTheme.colorScheme.primary
-                                            else -> Color.Transparent
-                                        })
+                                        .background(if (schema.schemaId == (selectedId ?: actions.currentInputModeId))
+                                            MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
                                         .padding(horizontal = 12.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    horizontalAlignment = Alignment.Start,
                                     verticalArrangement = Arrangement.Center,
                                 ) {
                                     Text(schema.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                         style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
-                                        color = if (schema.schemaId == actions.currentInputModeId && selectedId != schema.schemaId) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
-                                    if (duplicateName) Text(schema.schemaId, maxLines = 1,
+                                        color = if (schema.schemaId == (selectedId ?: actions.currentInputModeId))
+                                            MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface)
+                                    Text(modeName, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }

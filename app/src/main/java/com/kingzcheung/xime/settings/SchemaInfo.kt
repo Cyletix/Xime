@@ -24,5 +24,6 @@ data class SchemaInfo(
     /** 方案声明支持的键盘布局，默认只有全键盘 */
     val supportedLayouts: List<KeyboardLayout> = listOf(KeyboardLayout.FULL),
     /** 展开多布局时，标记此条目对应的布局 ID（null 表示单条目） */
-    val displayLayoutId: String? = null
+    val displayLayoutId: String? = null,
+    val language: InputLanguage = InputLanguage.forSchema(schemaId),
 )

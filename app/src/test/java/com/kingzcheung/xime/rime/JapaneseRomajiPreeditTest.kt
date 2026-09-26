@@ -3,6 +3,11 @@ package com.kingzcheung.xime.rime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import com.charleskorn.kaml.Yaml
+import com.charleskorn.kaml.YamlMap
+import com.charleskorn.kaml.YamlList
+import com.charleskorn.kaml.YamlScalar
+import java.io.File
 
 /**
  * 日语未拼完罗马音的显示判定（纯字符串规则，不需要引擎）。
@@ -12,16 +17,53 @@ import org.junit.Test
  * （`xform/n/ん/`、`xform/k/っ/` …，方案文件 506-530 行）会把它显示成 っ / ん。
  */
 class JapaneseRomajiPreeditTest {
-
-    /** 假读音映射：只用来验证拼接与边界，真读音由引擎给出。 */
-    private val reading: (String) -> String = { input ->
-        when (input) {
-            "ka" -> "か"
-            "kaki" -> "かき"
-            "KATA" -> "カタ"
-            else -> input
+    @Test fun rebuildingInputMatchesContextualKeyProcessing() {
+        mapOf("yoy" to "yoy", "kitte" to "kixtsute", "gakkou" to "gaxtsukou",
+            "nk" to "nnk", "nnk" to "nnk", "nky" to "nnky", "ny" to "ny",
+            "KATTA" to "KAXTSUTA", "kixtsute" to "kixtsute").forEach { (input, expected) ->
+            assertEquals(input, expected, canonicalJapaneseRomaji(input))
+            assertEquals("idempotent $input", expected, canonicalJapaneseRomaji(expected))
         }
     }
+
+    @Test fun bundledSchemasDisplayAndDeleteTheSameUnits() {
+        listOf("japanese", "jaroomaji").forEach { schema ->
+            val root = Yaml.default.parseToYamlNode(
+                File("src/main/assets/rime_japanese/$schema.schema.yaml").readText()) as YamlMap
+            val translator = root.entries.entries.single { it.key.content == "translator" }.value as YamlMap
+            val formats = (translator.entries.entries.single { it.key.content == "preedit_format" }.value as YamlList)
+                .items.map { (it as YamlScalar).content.split('/') }
+            fun display(input: String): String {
+                val echo = formats.fold(input) { text, rule ->
+                    assertEquals("xform", rule[0])
+                    Regex(rule[1]).replace(text, rule[2])
+                }
+                return japanesePreedit(input, echo)
+            }
+            mapOf("k" to "k", "n" to "n", "sh" to "sh", "ky" to "ky",
+                "kash" to "かsh", "nk" to "んk", "kk" to "っk", "ny" to "ny",
+                "nn" to "ん", "KATAK" to "カタK").forEach { (input, expected) ->
+                assertEquals("$schema: $input", expected, display(input))
+            }
+            mapOf("nka" to "ん", "kakka" to "かっ", "kk" to "っ", "nk" to "ん",
+                "kash" to "かs", "kya" to "", "KANPA" to "カン").forEach { (input, expected) ->
+                assertEquals("$schema: delete $input", expected, display(deleteJapaneseRomaji(input)))
+            }
+        }
+    }
+
+    @Test fun deletionPreservesEarlierNasalAndSokuon() {
+        val cases = mapOf("nka" to "nn", "nsha" to "nn", "nnka" to "nn",
+            "nnya" to "nn", "kakka" to "kaxtsu", "kk" to "xtsu", "nk" to "nn",
+            "ny" to "n", "kash" to "kas", "KANPA" to "KANN", "kaxtsu" to "ka")
+        cases.forEach { (input, expected) -> assertEquals(input, expected, deleteJapaneseRomaji(input)) }
+        var input = "kanka"
+        listOf("kann", "ka", "").forEach { expected ->
+            input = deleteJapaneseRomaji(input)
+            assertEquals(expected, input)
+        }
+    }
+
 
     @Test
     fun `以元音结尾的输入已经拼完`() {
@@ -67,16 +109,23 @@ class JapaneseRomajiPreeditTest {
         assertNull(pendingRomajiTail("ka."))
     }
 
+    /**
+     * 「尾部回显字符数 == 待拼字母数」是 japanesePreedit 的前提：方案 preedit_format
+     * 给每个未成音的字母都准备了单字符兜底规则。这里按 26 键真实回显锁定，不靠默契。
+     */
     @Test
-    fun `显示串等于已拼完部分读音加原字母尾部`() {
-        assertEquals("k", romajiTailDisplay("k", reading))
-        assertEquals("かk", romajiTailDisplay("kak", reading))
-        assertEquals("かきk", romajiTailDisplay("kakik", reading))
-        assertEquals("カタK", romajiTailDisplay("KATAK", reading))
-        assertEquals("sh", romajiTailDisplay("sh", reading))
-        assertEquals("かsh", romajiTailDisplay("kash", reading))
-        assertNull("完整假名不改写", romajiTailDisplay("kann", reading))
-        assertNull("以元音结尾不改写", romajiTailDisplay("kakina", reading))
+    fun `显示串等于引擎回显去掉尾部再接上按下的字母`() {
+        assertEquals("k", japanesePreedit("k", "っ"))
+        assertEquals("sh", japanesePreedit("sh", "っっ"))
+        assertEquals("か", japanesePreedit("ka", "か"))
+        assertEquals("かk", japanesePreedit("kak", "かっ"))
+        assertEquals("かn", japanesePreedit("kan", "かん"))
+        assertEquals("ん", japanesePreedit("nn", "ん"))
+        assertEquals("かっか", japanesePreedit("kakka", "かっか"))
+        assertEquals("カタK", japanesePreedit("KATAK", "カタッ"))
+        assertEquals("かきな", japanesePreedit("kakina", "かきな"))
+        // 回显长度不足以容纳尾部（方案改动或异常回显）：退回只显示按下的字母
+        assertEquals("sh", japanesePreedit("sh", "っ"))
     }
 
     @Test
@@ -94,6 +143,7 @@ class JapaneseRomajiPreeditTest {
         assertEquals(0, romajiDeleteStart("ka"))
         assertEquals(0, romajiDeleteStart("kya"))
         assertEquals(2, romajiDeleteStart("kann"))
+        assertEquals(2, romajiDeleteStart("kan"))
         assertEquals(0, romajiDeleteStart("nn"))
         assertEquals(2, romajiDeleteStart("ka-"))
         assertEquals(2, romajiDeleteStart("KATA"))
@@ -101,5 +151,46 @@ class JapaneseRomajiPreeditTest {
         assertEquals(3, romajiDeleteStart("kakka"))
         assertEquals(1, romajiDeleteStart("kka"))
         assertEquals(3, romajiDeleteStart("kakk"))
+    }
+
+    /**
+     * n + 辅音：n 已读成 ん，只有后面的辅音待拼（`nk` → んk、`nsh` → んsh、`nky` → んky）；
+     * n + y 未定音（可能是 にゃ/にゅ/にょ 的前缀），与主流日语输入法一致地保持待拼。
+     */
+    @Test
+    fun `n 后接辅音时 n 已成音，只有后面的辅音待拼`() {
+        assertEquals("k", pendingRomajiTail("nk"))
+        assertEquals("sh", pendingRomajiTail("nsh"))
+        assertEquals("ky", pendingRomajiTail("nky"))
+        assertEquals("ny", pendingRomajiTail("ny"))
+        assertEquals("んk", japanesePreedit("nk", "んっ"))
+        assertEquals("んsh", japanesePreedit("nsh", "んっっ"))
+        assertEquals("んky", japanesePreedit("nky", "んっっ"))
+        assertEquals("ny", japanesePreedit("ny", "んっ"))
+        assertEquals("んか", japanesePreedit("nka", "んか"))
+    }
+
+    /** 双字母声母整体按原字母显示（每个未成音字母在方案里各有一个兜底回显字符）。 */
+    @Test
+    fun `双字母声母整体显示按下的字母`() {
+        listOf("sh", "ch", "ts", "ky", "ny").forEach {
+            assertEquals(it, pendingRomajiTail(it))
+        }
+        assertEquals("sh", japanesePreedit("sh", "っっ"))
+        assertEquals("ch", japanesePreedit("ch", "っっ"))
+        assertEquals("ts", japanesePreedit("ts", "っっ"))
+        assertEquals("ky", japanesePreedit("ky", "っっ"))
+        assertEquals("かsh", japanesePreedit("kash", "かっっ"))
+    }
+
+    /** 大写罗马音 = 片假名：已拼完部分沿用回显，未成音尾部继续显示按下的（大写）字母。 */
+    @Test
+    fun `大写片假名路径未成音尾部保持大写`() {
+        assertEquals("K", pendingRomajiTail("KATAK"))
+        assertEquals("K", japanesePreedit("K", "ッ"))
+        assertEquals("カ", japanesePreedit("KA", "カ"))
+        assertEquals("カK", japanesePreedit("KAK", "カッ"))
+        assertEquals("カタ", japanesePreedit("KATA", "カタ"))
+        assertEquals("カタK", japanesePreedit("KATAK", "カタッ"))
     }
 }

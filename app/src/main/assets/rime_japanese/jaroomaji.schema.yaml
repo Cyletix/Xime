@@ -35,6 +35,7 @@ switches:
 engine:
   processors:
     - ascii_composer
+    - lua_processor@*cyime_japanese_romaji
     - recognizer
     - key_binder
     - speller
@@ -53,6 +54,7 @@ engine:
     - punct_translator
     - script_translator
   filters:
+    - lua_filter@*cyime_japanese_completion
     - uniquifier
 
 # # # # # # # # # # # # # # # # # # # #
@@ -118,24 +120,6 @@ speller:
     - "derive/tyo/cho/"
     - "derive/tyo/cyo/"
     - "derive/xtu/xtsu/"
-    - "derive/xtu/k/"
-    - "derive/xtu/c/"
-    - "derive/xtu/q/"
-    - "derive/xtu/g/"
-    - "derive/xtu/s/"
-    - "derive/xtu/z/"
-    - "derive/xtu/j/"
-    - "derive/xtu/t/"
-    - "derive/xtu/d/"
-    - "derive/xtu/h/"
-    - "derive/xtu/f/"
-    - "derive/xtu/b/"
-    - "derive/xtu/v/"
-    - "derive/xtu/p/"
-    - "derive/xtu/m/"
-    - "derive/xtu/y/"
-    - "derive/xtu/r/"
-    - "derive/xtu/w/"
     # は行
     - "derive/hu/fu/"
     - "derive/fwa/fa/"
@@ -147,7 +131,6 @@ speller:
     - "derive/vi/vyi/"
     - "derive/ve/vye/"
     # わ行
-    - "abbrev/nn/n/"
     # ア行
     - "derive/^I/YI/"
     - "derive/^U/WU/"
@@ -199,24 +182,6 @@ speller:
     - "derive/TYO/CHO/"
     - "derive/TYO/CYO/"
     - "derive/XTU/XTSU/"
-    - "derive/XTU/K/"
-    - "derive/XTU/C/"
-    - "derive/XTU/Q/"
-    - "derive/XTU/G/"
-    - "derive/XTU/S/"
-    - "derive/XTU/Z/"
-    - "derive/XTU/J/"
-    - "derive/XTU/T/"
-    - "derive/XTU/D/"
-    - "derive/XTU/H/"
-    - "derive/XTU/F/"
-    - "derive/XTU/B/"
-    - "derive/XTU/V/"
-    - "derive/XTU/P/"
-    - "derive/XTU/M/"
-    - "derive/XTU/Y/"
-    - "derive/XTU/R/"
-    - "derive/XTU/W/"
     # ハ行
     - "derive/HU/FU/"
     - "derive/FWA/FA/"
@@ -228,7 +193,6 @@ speller:
     - "derive/VI/VYI/"
     - "derive/VE/VYE/"
     # ワ行
-    - "abbrev/NN/N/"
 
 # # # # # # # # # # # # # # # # # # # #
 # 変換候補と変換候補の上に出てくる入力文字の設定
@@ -238,8 +202,17 @@ speller:
 translator:
   dictionary: jaroomaji
   enable_user_dict: true  # 学習機能ON
-  enable_completion: false
+  enable_completion: true
+  enable_word_completion: true
+  complete_short_prefix: true
+  spelling_hints: 64
+  always_show_comments: true  # Internal readings for the completion filter; hidden before display.
   preedit_format:
+    # Only contextual consonants are kana; an unfinished final letter stays literal.
+    - 'xform/([bcdfghjkmprstvwzyq])(?=\1)/っ/'
+    - 'xform/([BCDFGHJKMPRSTVWZYQ])(?=\1)/ッ/'
+    - 'xform/n(?=[bcdfghjkmpqrstvwxz])/ん/'
+    - 'xform/N(?=[BCDFGHJKMPQRSTVWXZ])/ン/'
     # 区切り文字の空白は消す
     - "xform/ //"
     # ひらがな(変換優先順)
@@ -507,26 +480,7 @@ translator:
     - "xform/u/う/"
     - "xform/i/い/"
     - "xform/a/あ/"
-    - "xform/n/ん/"
     # 小さい「っ」
-    - "xform/k/っ/"
-    - "xform/c/っ/"
-    - "xform/q/っ/"
-    - "xform/g/っ/"
-    - "xform/s/っ/"
-    - "xform/z/っ/"
-    - "xform/j/っ/"
-    - "xform/t/っ/"
-    - "xform/d/っ/"
-    - "xform/h/っ/"
-    - "xform/f/っ/"
-    - "xform/b/っ/"
-    - "xform/v/っ/"
-    - "xform/p/っ/"
-    - "xform/m/っ/"
-    - "xform/y/っ/"
-    - "xform/r/っ/"
-    - "xform/w/っ/"
     # カタカナ(変換優先順)
     - "xform/NN/ン/"
     - "xform/XTSU/ッ/"
@@ -792,26 +746,7 @@ translator:
     - "xform/U/ウ/"
     - "xform/I/イ/"
     - "xform/A/ア/"
-    - "xform/N/ン/"
     # 小さい「ッ」
-    - "xform/K/ッ/"
-    - "xform/C/ッ/"
-    - "xform/Q/ッ/"
-    - "xform/G/ッ/"
-    - "xform/S/ッ/"
-    - "xform/Z/ッ/"
-    - "xform/J/ッ/"
-    - "xform/T/ッ/"
-    - "xform/D/ッ/"
-    - "xform/H/ッ/"
-    - "xform/F/ッ/"
-    - "xform/B/ッ/"
-    - "xform/V/ッ/"
-    - "xform/P/ッ/"
-    - "xform/M/ッ/"
-    - "xform/Y/ッ/"
-    - "xform/R/ッ/"
-    - "xform/W/ッ/"
     # 記号
     - "xform/l/ー/"
     - "xform/L/ー/"
@@ -867,3 +802,6 @@ key_binder:
 # # # # # # # # # # # # # # # # # # # #
 recognizer:
   import_preset: default
+  patterns:
+    # Uppercase romaji requests katakana; it must not become an ASCII token.
+    uppercase: "(?!)"

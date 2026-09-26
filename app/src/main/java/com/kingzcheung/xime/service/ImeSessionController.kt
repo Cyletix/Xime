@@ -28,7 +28,8 @@ internal class ImeSessionController(private val service: XimeInputMethodService)
     ) {
         val inputText = composition.input
         val codeInInputBox = SettingsPreferences.getInputTextLocation(service) == SettingsPreferences.INPUT_TEXT_INPUT_BOX
-        val preeditText = composition.preedit
+        // 日语罗马音显示归一化：末尾未拼完的字母按按下的键显示（与 updateUIWithResult 同一出口规则）
+        val preeditText = service.japaneseInputController.normalizePreedit(inputText, composition.preedit)
         val candidatesWithComments = composition.candidates.toList()
         val isAsciiMode = composition.isAsciiMode
         val hasNextPage = composition.hasNextPage
@@ -187,6 +188,9 @@ internal class ImeSessionController(private val service: XimeInputMethodService)
     ) {
         val isAsciiMode = result.isAsciiMode
         val candidatesWithComments = result.candidates
+        // 日语罗马音显示归一化：末尾未拼完的字母按按下的键显示（引擎回显会给 っ / ん），
+        // 与退格单位同源。放在出口而不是按键路径，刷新（updateUI/applyComposition）才不打回原回显。
+        val preeditText = service.japaneseInputController.normalizePreedit(result.inputText, result.preeditText)
 
         val pendingEnglish = service.candidateState.value.pendingEnglishText
 
@@ -217,7 +221,7 @@ internal class ImeSessionController(private val service: XimeInputMethodService)
             // 同 applyComposition：T9 编码显示永不回退原始数字 input，
             // preedit 缺失或含未转换数字时保留上一帧字母编码
             val rawPreedit = when {
-                result.preeditText.isNotEmpty() && result.preeditText.none { it.isDigit() } -> result.preeditText
+                preeditText.isNotEmpty() && preeditText.none { it.isDigit() } -> preeditText
                 result.inputText.isEmpty() -> ""
                 else -> service.candidateState.value.preeditText
             }
@@ -231,7 +235,7 @@ internal class ImeSessionController(private val service: XimeInputMethodService)
         } else {
             // 非 T9 方案：preeditText 用引擎回显（带音节分隔符，如全拼 ni'hao），空则回退 input；
             // inputText 保留原始键入串供提交路径直接上屏（见 applyComposition 注释）。
-            displayText = if (result.preeditText.isNotEmpty()) result.preeditText else result.inputText
+            displayText = if (preeditText.isNotEmpty()) preeditText else result.inputText
             displayCandidates = filteredTexts
             displayComments = filteredComments
             isComposing = result.inputText.isNotEmpty()

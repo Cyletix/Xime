@@ -49,6 +49,55 @@ class JapaneseInputTest {
         }
     }
 
+    @Test fun unfinishedRomajiCompletesWordsWithoutInventingSokuon() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val (userDir, sharedDir) = RimeConfigHelper.initializeRimeDataAsync(context)
+        val engine = RimeEngine.getInstance()
+        engine.initialize(userDir, sharedDir)
+        assertTrue(RimeConfigHelper.ensureDeployment(context))
+        assertTrue(engine.ensureSession())
+        val previous = engine.getCurrentSchema()
+        try {
+            assertTrue(engine.switchSchema("japanese"))
+            engine.setOption("ascii_mode", false)
+            fun type(input: String): List<String> {
+                engine.clearComposition()
+                input.forEach { assertTrue("key $it in $input", engine.processKey(it.code, 0)) }
+                val words = engine.getAllCandidates(40).map { it.text }
+                android.util.Log.i("JapaneseCompletionTest", "$input: ${engine.getComposition().preedit} / $words")
+                return words
+            }
+            val words = type("yoy")
+            assertEquals("よy", engine.getComposition().preedit.replace(" ", ""))
+            assertFalse("must not invent っ: $words", "よっ" in words)
+            assertTrue("予約 must be reachable from yoy: $words", "予約" in words)
+            assertTrue("余裕 must be reachable from yoy: $words", "余裕" in words)
+            assertTrue("common completions must be near the front: $words",
+                listOf("予約", "余裕", "よい").all { it in words.take(8) })
+            val index = words.indexOf("予約")
+            assertTrue(engine.selectCandidateByGlobalIndex(index))
+            assertEquals("予約", engine.commit())
+            assertEquals("", engine.getInput())
+            listOf("y", "k", "sh", "ky", "n").forEach { input ->
+                val candidates = type(input)
+                assertFalse("$input must not become a standalone っ", candidates.firstOrNull() == "っ")
+                assertEquals(input, engine.getComposition().preedit.replace(" ", ""))
+            }
+            mapOf("kitte" to "きって", "gakkou" to "がっこう", "nka" to "んか",
+                "nnka" to "んか", "kanya" to "かにゃ", "KATTA" to "カッタ").forEach { (input, reading) ->
+                type(input)
+                assertEquals(input, reading, engine.getComposition().preedit.replace(" ", ""))
+                assertReadingReturn(engine, reading)
+            }
+            type("yoy")
+            engine.setInput(deleteJapaneseRomaji(engine.getInput()))
+            assertEquals("よ", engine.getComposition().preedit.replace(" ", ""))
+        } finally {
+            engine.clearComposition()
+            if (previous.isNotBlank()) engine.switchSchema(previous)
+        }
+    }
+
     private fun verifyQueuedKeyWaitsForEngine(engine: RimeEngine) {
         val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
         var result: java.util.concurrent.Future<RimeProcessResult>? = null

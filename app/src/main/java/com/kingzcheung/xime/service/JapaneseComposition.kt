@@ -14,7 +14,9 @@ internal fun RimeEngine.japaneseReading(input: String): String {
  * 读音长度探测边界（仅供转换预览的切换范围使用）。
  *
  * 不要再用于退格删除单位：ん 与 っ 都是单字符，长度比较判不出假名边界，会把整串一次删光
- * （2026-09-25 复现）。删除单位已改为同源的 [com.kingzcheung.xime.rime.romajiDeleteStart]。
+ * （2026-09-25 复现）。删除单位已改为同源的 [com.kingzcheung.xime.rime.romajiDeleteStart]；
+ * 显示边界同理，走纯字符串的 [com.kingzcheung.xime.rime.japanesePreedit]（在 UI 出口归一化），
+ * 不再用引擎探测"是否拼完"——探测会把单字母的促音/拨音兜底回显当成已拼完。
  */
 internal fun RimeEngine.previousJapaneseBoundary(input: String): Int {
     if (input.isEmpty()) return 0
@@ -27,45 +29,6 @@ internal fun RimeEngine.previousJapaneseBoundary(input: String): Int {
         }
         return 0
     } finally { setInput(input); RimeEngine.rimeLock.unlock() }
-}
-
-/**
- * 末段是否为完整音节（纯字符串快路径）：以元音或长音符结尾的罗马音一定已拼完，
- * 无需再问引擎；其余（声母、n、x 等）交给引擎判定。返回 true 表示不必探测。
- */
-internal fun japaneseSyllableClosedByVowel(input: String): Boolean {
-    val last = input.lastOrNull() ?: return true
-    return !last.isLetter() || last.lowercaseChar() in "aiueo"
-}
-
-/**
- * 日语罗马音显示文本：已拼成假名的部分沿用原方案回显，末尾尚未拼完的罗马音
- * 显示为按下的字母。
- *
- * 原方案的 preedit_format 为促音/拨音准备了单字母规则（k→っ、n→ん 等），
- * 只按下声母时屏幕会显示成 っ / ん，看不到自己按下的键；这里把未拼完的尾部
- * 换回原始字母。是否拼完由引擎判定（能译成假名即算拼完），不复制罗马音规则。
- *
- * 返回 null 表示无需改写：输入为空、以元音结尾，或末段已是完整假名。
- */
-internal fun RimeEngine.japaneseDisplayText(input: String): String? {
-    if (input.isEmpty() || japaneseSyllableClosedByVowel(input)) return null
-    RimeEngine.rimeLock.lock()
-    try {
-        val boundary = previousJapaneseBoundary(input)
-        val tail = input.drop(boundary)
-        if (tail.isEmpty() || isTranslatableSyllable(tail)) return null
-        return japaneseReading(input.take(boundary)) + tail
-    } finally {
-        setInput(input)
-        RimeEngine.rimeLock.unlock()
-    }
-}
-
-/** 末段是否已能译成假名：只回显原始字母说明还没拼完。锁内调用。 */
-private fun RimeEngine.isTranslatableSyllable(text: String): Boolean {
-    setInput(text)
-    return getCandidates().any { it != text }
 }
 
 internal class JapaneseConversion(private val engine: RimeEngine, val input: String) {

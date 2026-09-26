@@ -1,44 +1,41 @@
 package com.kingzcheung.xime.service
 
 import com.kingzcheung.xime.rime.RimeProcessResult
-import com.kingzcheung.xime.rime.romajiDeleteStart
+import com.kingzcheung.xime.rime.japanesePreedit
+import com.kingzcheung.xime.rime.deleteJapaneseRomaji
 import com.kingzcheung.xime.settings.JapaneseSchemas
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** 所有方法在按键队列串行调用；会话或原编码改变就作废旧转换预览。 */
 internal class JapaneseInputController(private val service: XimeInputMethodService) {
-    private var conversion: JapaneseConversion? = null
+    /**
+     * 转换预览：非空表示 preedit 已是假名/汉字预览。
+     * UI 出口可能在主线程经 [normalizePreedit] 读取，故用 volatile。
+     */
+    @Volatile private var conversion: JapaneseConversion? = null
     private var session = -1L
     private var schema = ""
-    private var displaySession = -1L
-    private var displaySchema = ""
-    private var displayInput = ""
-    private var displayPreeditText: String? = null
     private val engine get() = service.rimeEngine
+    /** 按键路径的判定：引擎是权威源（切方案/部署期间可能领先或落后 uiState 一帧）。 */
     private fun available(): Boolean = !engine.isAsciiMode() && (engine.getCurrentSchema() in JapaneseSchemas.ids || engine.getCurrentSchema() == "jaroomaji")
+
+    /** 显示出口的判定：只读 uiState，不碰引擎——UI 每次刷新都会调用，不付出 JNI / 锁开销。 */
+    private fun displayAvailable(): Boolean {
+        val state = service.uiState.value
+        return !state.isAsciiMode && (state.currentSchemaId in JapaneseSchemas.ids || state.currentSchemaId == "jaroomaji")
+    }
     fun displayCandidates(input: String) = conversion?.takeIf { it.input == input && session == service.uiState.value.inputSessionId }?.candidates?.toList()
 
     /**
-     * 显示层修正（key-processing 线程）：末尾尚未拼完的罗马音显示为按下的字母。
+     * 显示层归一化：末尾尚未拼完的罗马音显示为按下的字母（引擎回显会给 っ / ん）。
      *
-     * 引擎回显会把只按下的声母显示成 っ / ん（原方案给促音/拨音准备的单字母规则）。
-     * 按 (会话, 方案, 编码) 缓存结果：同一编码的后续 UI 刷新（翻页、高亮）不再探测引擎。
+     * 纯字符串运算、不改引擎状态、不持锁，因此由两个 UI 出口统一调用
+     * （updateUIWithResult / applyComposition），按键后的刷新路径同样生效。
+     * 转换预览期间 preedit 是假名/汉字预览，跳过归一化；非日语方案原样返回。
      */
-    fun withDisplayPreedit(result: RimeProcessResult): RimeProcessResult {
-        if (!available()) return result
-        val input = result.inputText
-        val session = service.uiState.value.inputSessionId
-        val schema = service.uiState.value.currentSchemaId
-        if (session != displaySession || schema != displaySchema || input != displayInput) {
-            displaySession = session
-            displaySchema = schema
-            displayInput = input
-            displayPreeditText = engine.japaneseDisplayText(input)
-        }
-        val display = displayPreeditText ?: return result
-        return result.copy(preeditText = display)
-    }
+    fun normalizePreedit(input: String, preedit: String): String =
+        if (conversion == null && preedit.isNotEmpty() && displayAvailable()) japanesePreedit(input, preedit) else preedit
 
     private fun current(): JapaneseConversion? {
         if (!available() || session != service.uiState.value.inputSessionId || schema != engine.getCurrentSchema() || conversion?.input != engine.getInput()) conversion = null
@@ -55,8 +52,8 @@ internal class JapaneseInputController(private val service: XimeInputMethodServi
     private suspend fun show() {
         val active = current()
         val result = engine.getProcessResult(true).let {
-            // 转换预览显示假名本身；无转换时修正未拼完的罗马音尾部（显示按下的字母）
-            if (active == null) withDisplayPreedit(it)
+            // 转换预览显示假名本身；无转换时由 updateUIWithResult 出口做罗马音归一化（显示按下的字母）
+            if (active == null) it
             else it.copy(preeditText = active.preview, candidates = active.candidates, hasNextPage = false, hasPrevPage = false)
         }
         val owner = service.uiState.value.inputSessionId
@@ -105,8 +102,7 @@ internal class JapaneseInputController(private val service: XimeInputMethodServi
         // 删除单位与显示同源（romajiDeleteStart）：未拼完的罗马音只删一个字母，
         // 已拼完的假名整体删。不能再用引擎读音长度探测边界——ん 与 っ 等长时
         // 判不出假名边界，会把整串一次删光（2026-09-25 复现）。
-        val end = romajiDeleteStart(input)
-        engine.setInput(input.take(end))
+        engine.setInput(deleteJapaneseRomaji(input))
         show()
         return true
     }

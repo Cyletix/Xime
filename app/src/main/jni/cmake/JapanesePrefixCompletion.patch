@@ -1,0 +1,213 @@
+diff --git a/src/rime/dict/dictionary.cc b/src/rime/dict/dictionary.cc
+index 1dc47f8f..b6450ad8 100644
+--- a/src/rime/dict/dictionary.cc
++++ b/src/rime/dict/dictionary.cc
+@@ -58,7 +58,7 @@ struct Chunk {
+         size(a.remaining()),
+         cursor(0),
+         remaining_code(r),
+-        matching_code_size(a.index_code().size()),
++        matching_code_size(a.matching_code_size()),
+         credibility(cr),
+         quality_len(q) {}
+ 
+@@ -242,9 +242,10 @@ static void lookup_table(Table* table,
+                          size_t start_pos,
+                          bool predict_word,
+                          double initial_credibility,
+-                         size_t min_end_pos = 0) {
++                         size_t min_end_pos = 0,
++                         bool complete_short_prefix = false) {
+   TableQueryResult result;
+-  if (!table->Query(syllable_graph, start_pos, &result, min_end_pos)) {
++  if (!table->Query(syllable_graph, start_pos, &result, min_end_pos, complete_short_prefix)) {
+     return;
+   }
+   // copy result
+@@ -320,7 +321,8 @@ an<DictEntryCollector> Dictionary::Lookup(const SyllableGraph& syllable_graph,
+                                           const hash_set<string>* blacklist,
+                                           bool predict_word,
+                                           double initial_credibility,
+-                                          size_t min_end_pos) {
++                                          size_t min_end_pos,
++                                          bool complete_short_prefix) {
+   if (!loaded())
+     return nullptr;
+   auto collector = New<DictEntryCollector>();
+@@ -328,7 +330,7 @@ an<DictEntryCollector> Dictionary::Lookup(const SyllableGraph& syllable_graph,
+     if (!table->IsOpen())
+       continue;
+     lookup_table(table.get(), collector.get(), syllable_graph, start_pos,
+-                 predict_word, initial_credibility, min_end_pos);
++                 predict_word, initial_credibility, min_end_pos, complete_short_prefix);
+   }
+   if (collector->empty())
+     return nullptr;
+diff --git a/src/rime/dict/dictionary.h b/src/rime/dict/dictionary.h
+index 8a854007..b4eeff39 100644
+--- a/src/rime/dict/dictionary.h
++++ b/src/rime/dict/dictionary.h
+@@ -77,7 +77,8 @@ class Dictionary : public Class<Dictionary, const Ticket&> {
+       const hash_set<string>* blacklist = nullptr,
+       bool predict_word = false,
+       double initial_credibility = 0.0,
+-      size_t min_end_pos = 0);
++      size_t min_end_pos = 0,
++      bool complete_short_prefix = false);
+   // 多起点查询：一次表查询覆盖全部 start（共享音节树 BFS），
+   // 结果按 start 分组。与逐 start 调 Lookup 的结果等价，但把
+   // T9 增量 compose 每键 O(N²) 的查询成本降为 O(N)。
+diff --git a/src/rime/dict/table.cc b/src/rime/dict/table.cc
+index 1b38958e..1accde2a 100644
+--- a/src/rime/dict/table.cc
++++ b/src/rime/dict/table.cc
+@@ -216,6 +216,21 @@ TableAccessor TableQuery::Access(SyllableId syllable_id,
+   return TableAccessor();
+ }
+ 
++// Bounded, one-syllable lookahead for short incomplete readings. Does not scan
++// the dictionary or alter the mapping/commit length of the typed prefix.
++vector<TableAccessor> TableQuery::PredictNextSyllable(size_t limit) const {
++  vector<TableAccessor> result;
++  auto index = level_ == 1 ? lv2_index_ : level_ == 2 ? lv3_index_ : nullptr;
++  if (!index) return result;
++  for (auto node = index->begin(); node != index->end() && result.size() < limit; ++node) {
++    auto accessor = Access(node->key);
++    if (accessor.exhausted()) continue;
++    accessor.set_matching_code_size(level_);
++    result.push_back(accessor);
++  }
++  return result;
++}
++
+ // string Table::GetString_v1(const table::StringType& x) {
+ //  return x.str().c_str();
+ // }
+@@ -571,12 +586,13 @@ const double kPenaltyForAmbiguousSyllable = -2.995732274;
+ bool Table::Query(const SyllableGraph& syll_graph,
+                   size_t start_pos,
+                   TableQueryResult* result,
+-                  size_t min_end_pos) {
++                  size_t min_end_pos,
++                  bool complete_short_prefix) {
+   if (!result)
+     return false;
+   result->clear();
+   map<int, TableQueryResult> per_start;
+-  if (!QueryMulti(syll_graph, {start_pos}, &per_start, min_end_pos))
++  if (!QueryMulti(syll_graph, {start_pos}, &per_start, min_end_pos, 0, complete_short_prefix))
+     return false;
+   *result = std::move(per_start[start_pos]);
+   return !result->empty();
+@@ -586,7 +602,8 @@ bool Table::QueryMulti(const SyllableGraph& syll_graph,
+                        const vector<size_t>& start_positions,
+                        map<int, TableQueryResult>* result,
+                        size_t min_end_pos,
+-                       size_t min_start_pos) {
++                       size_t min_start_pos,
++                       bool complete_short_prefix) {
+   if (!result || !index_ || start_positions.empty())
+     return false;
+   // 多起点 BFS：队列元素携带来源 start（结果分组键）与当前遍历位置。
+@@ -659,6 +676,14 @@ bool Table::QueryMulti(const SyllableGraph& syll_graph,
+                 .push_back(accessor);
+           }
+         }
++        if (complete_short_prefix && props->type == kCompletion &&
++            end_pos == syll_graph.interpreted_length &&
++            query.Advance(syll_id, next_credibility, delta_quality_len, current_pos)) {
++          for (auto& predicted : query.PredictNextSyllable(128)) {
++            (*result)[static_cast<int>(item.origin)][static_cast<int>(end_pos)].push_back(predicted);
++          }
++          query.Backdate();
++        }
+         if (end_pos < syll_graph.interpreted_length &&
+             (min_start_pos == 0 || end_pos >= min_start_pos) &&
+             query.Advance(syll_id, next_credibility, delta_quality_len,
+diff --git a/src/rime/dict/table.h b/src/rime/dict/table.h
+index 56d4eef1..9b773bd7 100644
+--- a/src/rime/dict/table.h
++++ b/src/rime/dict/table.h
+@@ -127,9 +127,12 @@ class TableAccessor {
+   Code code() const;
+   double credibility() const { return credibility_; }
+   double quality_len() const { return quality_len_; }
++  size_t matching_code_size() const { return matching_code_size_ ? matching_code_size_ : index_code_.size(); }
++  void set_matching_code_size(size_t size) { matching_code_size_ = size; }
+ 
+  private:
+   Code index_code_;
++  size_t matching_code_size_ = 0;
+   const table::Entry* entries_ = nullptr;
+   const table::LongEntry* long_entries_ = nullptr;
+   size_t size_ = 0;
+@@ -150,6 +153,8 @@ class TableQuery {
+                        double credibility = 0.0,
+                        double quality_len = 0.0) const;
+ 
++  vector<TableAccessor> PredictNextSyllable(size_t limit) const;
++
+   // down to next level
+   bool Advance(SyllableId syllable_id,
+                double credibility = 0.0,
+@@ -207,7 +212,8 @@ class Table : public MappedFile {
+   RIME_DLL bool Query(const SyllableGraph& syll_graph,
+                       size_t start_pos,
+                       TableQueryResult* result,
+-                      size_t min_end_pos = 0);
++                      size_t min_end_pos = 0,
++                      bool complete_short_prefix = false);
+   // 多起点查询：一次 BFS 覆盖多个 start（共享音节树遍历），
+   // 结果按 start 分组。T9 增量 compose 用它把每键 O(N²) 的
+   // 逐 start 查询降为 O(N)。min_start_pos > 0 时（T9 增量）：
+@@ -218,7 +224,8 @@ class Table : public MappedFile {
+                            const vector<size_t>& start_positions,
+                            map<int, TableQueryResult>* result,
+                            size_t min_end_pos = 0,
+-                           size_t min_start_pos = 0);
++                           size_t min_start_pos = 0,
++                           bool complete_short_prefix = false);
+   RIME_DLL string GetEntryText(const table::Entry& entry);
+ 
+   uint32_t dict_file_checksum() const;
+diff --git a/src/rime/gear/script_translator.cc b/src/rime/gear/script_translator.cc
+index 99e45117..3aa9ca37 100644
+--- a/src/rime/gear/script_translator.cc
++++ b/src/rime/gear/script_translator.cc
+@@ -227,6 +227,7 @@ ScriptTranslator::ScriptTranslator(const Ticket& ticket)
+                          &enable_word_completion_)) {
+       enable_word_completion_ = enable_completion_;
+     }
++    config->GetBool(name_space_ + "/complete_short_prefix", &complete_short_prefix_);
+     config->GetInt(name_space_ + "/max_homophones", &max_homophones_);
+     config->GetBool(name_space_ + "/incremental_compose",
+                     &incremental_enabled_);
+@@ -508,7 +509,7 @@ bool ScriptTranslation::Evaluate(Dictionary* dict, UserDictionary* user_dict) {
+     T9IncTimer pos0_timer("stage-eval-pos0");
+     phrase_ =
+         dict->Lookup(syllable_graph, 0, &translator_->blacklist(),
+-                     predict_word);
++                     predict_word, 0.0, 0, translator_->complete_short_prefix());
+     if (user_dict) {
+       const size_t kUnlimitedDepth = 0;
+       const size_t kNumSyllablesToPredictWord = 4;
+diff --git a/src/rime/gear/script_translator.h b/src/rime/gear/script_translator.h
+index 28e4f3bf..91d56f63 100644
+--- a/src/rime/gear/script_translator.h
++++ b/src/rime/gear/script_translator.h
+@@ -80,6 +80,7 @@ class ScriptTranslator : public Translator,
+   int max_homophones() const { return max_homophones_; }
+   int spelling_hints() const { return spelling_hints_; }
+   bool always_show_comments() const { return always_show_comments_; }
++  bool complete_short_prefix() const { return complete_short_prefix_; }
+   bool enable_word_completion() const { return enable_word_completion_; }
+   int max_word_length() const { return max_word_length_; }
+   int core_word_length() const;
+@@ -92,6 +93,7 @@ class ScriptTranslator : public Translator,
+   bool always_show_comments_ = false;
+   bool enable_correction_ = false;
+   bool enable_word_completion_ = false;
++  bool complete_short_prefix_ = false;
+   bool incremental_enabled_ = true;
+   the<Corrector> corrector_;
+   the<Poet> poet_;

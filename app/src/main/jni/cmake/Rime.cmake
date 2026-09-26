@@ -2,14 +2,10 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# 应用 Lua 5.4 Android 兼容性补丁（修复 32 位设备上 fseeko/ftello 不可用的问题）
-# 对 liolib.c 中 l_fseek 配置块做条件增强，使 32 位 Android < API 24 能编译
-# 使用 CMake 原生方式修补，无需依赖 git/patch
 string(ASCII 10 LUA_NL)
 set(LUA_LIOLIB_SRC "${CMAKE_SOURCE_DIR}/librime-lua-deps/lua5.4/liolib.c")
 if(EXISTS "${LUA_LIOLIB_SRC}")
   file(READ "${LUA_LIOLIB_SRC}" LUA_LIOLIB_CONTENT)
-  # 检查补丁是否已应用
   string(FIND "${LUA_LIOLIB_CONTENT}" "ANDROID" LUA_ALREADY_PATCHED)
   if(LUA_ALREADY_PATCHED EQUAL -1)
     string(FIND "${LUA_LIOLIB_CONTENT}" "#if !defined(l_fseek)" LUA_ANCHOR_POS)
@@ -37,23 +33,16 @@ if(EXISTS "${LUA_LIOLIB_SRC}")
   endif()
 endif()
 
-# 已集成的插件
 set(RIME_PLUGINS librime-octagram librime-predict librime-t9)
 
-# 将插件复制到 plugins/ 目录。
-# 顶层插件目录（librime-t9 等）是唯一权威源码，这里在每次 configure 时
-# 都全量同步，确保插件编译副本与顶层一致（file(COPY) 保留源文件时间戳，
-# 内容未变的文件不会触发重编译）。
 foreach(plugin ${RIME_PLUGINS})
   file(COPY "${CMAKE_SOURCE_DIR}/${plugin}/"
        DESTINATION "${CMAKE_SOURCE_DIR}/librime/plugins/${plugin}")
 endforeach()
 
-# librime-lua 需要特殊命名 lua
 file(COPY "${CMAKE_SOURCE_DIR}/librime-lua/"
      DESTINATION "${CMAKE_SOURCE_DIR}/librime/plugins/lua")
 
-# librime-lua thirdparty 依赖（Lua 5.4 源码）
 if(NOT EXISTS "${CMAKE_SOURCE_DIR}/librime/plugins/lua/thirdparty")
   file(COPY "${CMAKE_SOURCE_DIR}/librime-lua-deps/"
        DESTINATION "${CMAKE_SOURCE_DIR}/librime/plugins/lua/thirdparty")
@@ -61,8 +50,10 @@ endif()
 
 option(BUILD_TEST "" OFF)
 option(BUILD_STATIC "" ON)
+include("${CMAKE_CURRENT_LIST_DIR}/JapanesePrefixCompletion.cmake")
 add_subdirectory(librime)
 include("${CMAKE_CURRENT_LIST_DIR}/T9SingleKeyRecall.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/T9PhraseBeforeSentence.cmake")
 target_compile_options(
   rime-static PRIVATE "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=." "-Wno-error=deprecated-declarations")
 

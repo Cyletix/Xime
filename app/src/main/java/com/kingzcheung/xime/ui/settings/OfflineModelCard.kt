@@ -16,7 +16,6 @@ import com.kingzcheung.xime.model.*
 import com.kingzcheung.xime.speech.AsrModelManager
 import com.kingzcheung.xime.speech.SpeechModelCatalog
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Download and select in the existing speech settings; selection applies to the next recording. */
@@ -24,11 +23,10 @@ import kotlinx.coroutines.withContext
 internal fun OfflineModelCard() {
     val context = LocalContext.current
     val manager = remember { AsrModelManager(context) }
-    val scope = rememberCoroutineScope()
     val models by ModelManager.modelsFlow.collectAsState()
     val downloads by ModelManager.downloadStates.collectAsState()
     var selected by remember { mutableStateOf(manager.getSelectedModelId()) }
-    var error by remember { mutableStateOf<String?>(null) }
+    val error = downloads.values.filterIsInstance<ModelDownloadState.Error>().firstOrNull()?.message
     LaunchedEffect(Unit) { withContext(Dispatchers.IO) { ModelManager.loadFromRemote(context) } }
     val choices = listOf(SpeechModelCatalog.ZIPFORMER, SpeechModelCatalog.PARAFORMER, SpeechModelCatalog.SENSEVOICE)
     val firstPass = when (selected) {
@@ -44,7 +42,6 @@ internal fun OfflineModelCard() {
             choices.forEach { id ->
                 val info = manager.getAsrModels().firstOrNull { it.id == id }
                 val isCorrection = id == SpeechModelCatalog.SENSEVOICE
-                val ids = listOf(id)
                 val state = downloads[id] as? ModelDownloadState.Downloading
                 val ready = remember(id, downloads, models) { runCatching { manager.selection(id).ready }.getOrDefault(false) }
                 val checked = if (isCorrection) refine else firstPass == id
@@ -65,22 +62,7 @@ internal fun OfflineModelCard() {
                     }
                     if (isCorrection) Switch(checked = checked, enabled = ready || checked, onCheckedChange = null)
                     if (!ready && state == null) TextButton(onClick = {
-                        error = null
-                        scope.launch {
-                            for (required in ids) {
-                                if (manager.selection(required).ready) continue
-                                val fallback = AsrModelManager.DEFAULT_MODEL
-                                val model = ModelManager.getModel(required) ?: ModelInfo(fallback.id, fallback.name,
-                                    fallback.description, ModelCategory.ASR, versions = listOf(ModelVersion(
-                                        version = "2025-06-30", size = fallback.size, archiveUrl = fallback.downloadUrl,
-                                        files = fallback.files.map { ModelFile(it, "") })))
-                                var failed = false
-                                ModelManager.downloadModel(context, model, { result ->
-                                    if (result is ModelDownloadState.Error) { error = result.message; failed = true }
-                                })
-                                if (failed) break
-                            }
-                        }
+                        ModelManager.getModel(id)?.let { ModelManager.downloadModelInBackground(context, it) }
                     }) { Text("下载") }
                 }
                 if (state != null) LinearProgressIndicator(progress = { state.progress.coerceIn(0f, 1f) },

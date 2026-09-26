@@ -82,11 +82,7 @@ fun SmartPredictionSettingsContent(
         SettingsPreferences.getPredictionSelectedModel(context)
     }
     var selectedModelId by remember {
-        mutableStateOf(
-            if (savedModelId.isNotEmpty() && predictionModels.any { it.id == savedModelId })
-                savedModelId
-            else ""
-        )
+        mutableStateOf(savedModelId)
     }
 
     LaunchedEffect(uiState.toastMessage) {
@@ -250,7 +246,7 @@ fun SmartPredictionSettingsContent(
                                 isSelected = model.id == selectedModelId,
                                 onSelect = {
                                     selectedModelId = model.id
-                                    SettingsPreferences.setPredictionSelectedModel(context, model.id)
+                                    viewModel.selectModel(model.id)
                                 },
                                 onOpenInStore = { onNavigateToModelDetail(model.id) }
                             )
@@ -386,7 +382,10 @@ private fun PredictionModelCard(
     onOpenInStore: () -> Unit
 ) {
     val context = LocalContext.current
-    val isDownloaded = remember { ModelManager.isModelDownloaded(context, modelInfo.id) }
+    val revision by ModelManager.installedRevision.collectAsStateWithLifecycle()
+    val downloads by ModelManager.downloadStates.collectAsStateWithLifecycle()
+    val isDownloaded = remember(modelInfo, revision) { ModelManager.isModelReady(context, modelInfo.id) }
+    val progress = downloads[modelInfo.id] as? com.kingzcheung.xime.model.ModelDownloadState.Downloading
 
     Row(
         modifier = Modifier
@@ -452,7 +451,13 @@ private fun PredictionModelCard(
             }
         }
 
-        if (isDownloaded) {
+        if (progress != null) {
+            Column(Modifier.width(84.dp).padding(start = 8.dp)) {
+                androidx.compose.material3.LinearProgressIndicator(progress = { progress.progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth())
+                Text("${(progress.progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
+            }
+        } else if (isDownloaded) {
             Spacer(modifier = Modifier.width(8.dp))
             OutlinedButton(
                 onClick = onSelect,

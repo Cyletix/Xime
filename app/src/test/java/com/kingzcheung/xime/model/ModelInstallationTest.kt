@@ -8,6 +8,18 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class ModelInstallationTest {
+    @Test fun predictionNeedsBothNonemptyRuntimeFiles() {
+        val dir = java.nio.file.Files.createTempDirectory("prediction-ready").toFile()
+        try {
+            File(dir, "vocab.json").writeText("{}")
+            assertFalse(predictionModelFilesReady(dir))
+            File(dir, "model_int8_dynamic.onnx").writeBytes(byteArrayOf())
+            assertFalse(predictionModelFilesReady(dir))
+            File(dir, "model_int8_dynamic.onnx").writeText("model")
+            assertTrue(predictionModelFilesReady(dir))
+        } finally { dir.deleteRecursively() }
+    }
+
     @get:Rule val temporary = TemporaryFolder()
 
     @Test fun incompleteDownloadDoesNotReplaceInstalledModel() {

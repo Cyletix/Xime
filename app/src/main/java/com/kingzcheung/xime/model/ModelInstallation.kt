@@ -5,6 +5,11 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
 
+internal fun predictionModelFilesReady(directory: File): Boolean =
+    listOf("vocab.json", "model_int8_dynamic.onnx").all { name ->
+        File(directory, name).let { it.isFile && it.length() > 0 }
+    }
+
 internal fun findModelFile(directory: File, version: ModelVersion, name: String): File {
     val direct = modelDownloadFile(directory, name)
     return if (direct.isFile || version.archiveUrl == null) direct else directory.walkTopDown()

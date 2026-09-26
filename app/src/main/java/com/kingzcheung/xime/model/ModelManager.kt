@@ -15,16 +15,30 @@ import kotlinx.coroutines.CancellationException
 object ModelManager {
 
     private const val TAG = "ModelManager"
+    private val downloads = ModelDownloadQueue(kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO))
+    private val _installedRevision = MutableStateFlow(0L)
+    val installedRevision: StateFlow<Long> = _installedRevision
+    fun notifyInstalledModelsChanged() { _installedRevision.update { it + 1 } }
+
+    /** Same readiness contract as the prediction loader, including installs before index loading. */
+    fun isModelReady(context: Context, id: String): Boolean {
+        ModelStorage.migrateLegacyForModel(context, id)
+        if (id.startsWith("predictive-text")) {
+            return predictionModelFilesReady(ModelStorage.getModelDir(context, id)) &&
+                (getModel(id)?.let { isModelDownloaded(context, it) } ?: true)
+        }
+        return isModelDownloaded(context, id)
+    }
 
     private var initialized = false
-    private var remoteIndexLoaded = false
-    private val _modelsFlow = kotlinx.coroutines.flow.MutableStateFlow<List<ModelInfo>>(com.kingzcheung.xime.speech.SpeechModelCatalog.models)
+    private val _modelsFlow = kotlinx.coroutines.flow.MutableStateFlow<List<ModelInfo>>(BuiltinModelCatalog.models)
     private val downloadLocks = ConcurrentHashMap<String, Mutex>()
     private val installGuards = ConcurrentHashMap<String, ModelInstallGuard>()
     private val _downloadStates = MutableStateFlow<Map<String, ModelDownloadState>>(emptyMap())
     val downloadStates: StateFlow<Map<String, ModelDownloadState>> = _downloadStates
 
-    /** 可观察的模型清单（远程 index 加载后自动更新） */
+    /** 随应用发布、离线可用的模型清单。 */
     val modelsFlow: kotlinx.coroutines.flow.StateFlow<List<ModelInfo>> = _modelsFlow
 
     fun initialize() {
@@ -33,10 +47,7 @@ object ModelManager {
         FileLogger.i(TAG, "ModelManager initialized")
     }
 
-    /** 模型清单合并 CyIME 固定版本语音模型与远程 index（models/index.yaml）。
-     *  以 StateFlow 内的不可变列表为唯一状态源：读方拿到的是发布时的快照，
-     *  与后续刷新互不干扰（历史上共享可变列表曾被遍历方并发 clear/addAll，
-     *  连点刷新触发 ConcurrentModificationException 闪退）。 */
+    /** 不可变快照，避免下载页刷新期间修改正在遍历的清单。 */
     private fun allModels(): List<ModelInfo> = _modelsFlow.value
 
     fun getAllModels(): List<ModelInfo> = allModels()
@@ -46,20 +57,11 @@ object ModelManager {
     fun getModelsByCategory(category: ModelCategory): List<ModelInfo> =
         allModels().filter { it.category == category }
 
+    // Kept for existing callers; the built-in catalog is available offline from process start.
     suspend fun loadFromRemote(context: Context) {
-        val remote = ModelIndexLoader.loadFromRemote(context)
-        if (remote.isNotEmpty()) {
-            FileLogger.i(TAG, "Loaded ${remote.size} models from remote index")
-        } else {
-            FileLogger.w(TAG, "Remote index returned empty, retaining the bundled speech catalog")
-        }
-        if (remote.isNotEmpty()) {
-            remoteIndexLoaded = true
-            _modelsFlow.value = (com.kingzcheung.xime.speech.SpeechModelCatalog.models + remote).distinctBy { it.id }
-        }
+        _modelsFlow.value = BuiltinModelCatalog.models
     }
 
-    fun isUsingRemoteIndex(): Boolean = remoteIndexLoaded
 
     fun isModelDownloaded(context: Context, id: String): Boolean {
         val model = getModel(id) ?: return false
@@ -72,7 +74,8 @@ object ModelManager {
         val dir = getModelStorageDir(context, model) ?: return false
         if (!dir.exists()) return false
 
-        return installedModelVersion(dir, model, MarketVersionStore.getModelVersion(context, model.id)) != null
+        return installedModelVersion(dir, model, MarketVersionStore.getModelVersion(context, model.id)) != null &&
+            (model.category != ModelCategory.PREDICTION || predictionModelFilesReady(dir))
     }
 
     fun getModelStorageDir(context: Context, model: ModelInfo): File? {
@@ -114,12 +117,26 @@ object ModelManager {
         downloadModel(context, model, onProgress)
     }
 
-    suspend fun downloadModel(
+    fun downloadModelInBackground(context: Context, model: ModelInfo,
+        onProgress: (ModelDownloadState) -> Unit = {}, version: ModelVersion? = null,
+        onlyIfDefaultPending: Boolean = false): kotlinx.coroutines.Deferred<Unit> {
+        val app = context.applicationContext
+        val key = "${model.id}:${(version ?: model.resolvedVersion())?.version.orEmpty()}"
+        return downloads.start(key) { performDownload(app, model, onProgress, version, onlyIfDefaultPending) }
+    }
+
+    suspend fun downloadModel(context: Context, model: ModelInfo,
+        onProgress: (ModelDownloadState) -> Unit, version: ModelVersion? = null,
+        onlyIfDefaultPending: Boolean = false) {
+        downloadModelInBackground(context, model, onProgress, version, onlyIfDefaultPending).await()
+    }
+
+    private suspend fun performDownload(
         context: Context,
         model: ModelInfo,
         onProgress: (ModelDownloadState) -> Unit,
-        version: ModelVersion? = null,
-        onlyIfDefaultPending: Boolean = false,
+        version: ModelVersion?,
+        onlyIfDefaultPending: Boolean,
     ) {
         val guard = installGuards.getOrPut(model.id) { ModelInstallGuard() }
         val generation = guard.currentGeneration()
@@ -144,6 +161,7 @@ object ModelManager {
             try {
                 ModelDownloader.downloadModel(context, model, { state ->
                     _downloadStates.update { it + (model.id to state) }
+                    if (state is ModelDownloadState.Complete) notifyInstalledModelsChanged()
                     onProgress(state)
                 }, version, install = { staging, destination ->
                     guard.install(generation, staging, destination,
@@ -180,6 +198,7 @@ object ModelManager {
             if (success) {
                 MarketVersionStore.removeModelVersion(context, model.id)
                 DefaultModelInstaller.markHandled(context, model.id)
+                notifyInstalledModelsChanged()
                 _downloadStates.update { it + (model.id to ModelDownloadState.Idle) }
             }
             success

@@ -16,10 +16,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 
 data class SmartPredictionUiState(
     val isEnabled: Boolean = false,
@@ -52,6 +48,18 @@ class SmartPredictionSettingsViewModel(application: Application) : AndroidViewMo
         loadCacheSize()
         validateModelState()
         loadRemoteModels()
+        viewModelScope.launch {
+            ModelManager.installedRevision.collect { checkModelState() }
+        }
+        viewModelScope.launch {
+            ModelManager.downloadStates.collect { states ->
+                val state = states[SettingsPreferences.getPredictionSelectedModel(context)]
+                val progress = state as? com.kingzcheung.xime.model.ModelDownloadState.Downloading
+                _uiState.update { it.copy(isDownloading = progress != null,
+                    downloadProgress = progress?.progress ?: 0f,
+                    downloadStatus = (state as? com.kingzcheung.xime.model.ModelDownloadState.Error)?.message.orEmpty()) }
+            }
+        }
     }
 
     private fun loadRemoteModels() {
@@ -62,10 +70,7 @@ class SmartPredictionSettingsViewModel(application: Application) : AndroidViewMo
     
     private fun checkModelState() {
         val modelId = SettingsPreferences.getPredictionSelectedModel(context)
-        val modelDir = ModelStorage.getModelDir(context, modelId)
-        val vocabFile = modelDir.resolve("vocab.json")
-        val modelFile = modelDir.resolve("model_int8_dynamic.onnx")
-        val hasModel = vocabFile.exists() && modelFile.exists()
+        val hasModel = ModelManager.isModelReady(context, modelId)
         _uiState.update { it.copy(hasModel = hasModel) }
     }
     
@@ -86,7 +91,18 @@ class SmartPredictionSettingsViewModel(application: Application) : AndroidViewMo
         }
     }
     
+    fun selectModel(id: String) {
+        SettingsPreferences.setPredictionSelectedModel(context, id)
+        checkModelState()
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { AssociationManager.release() }
+            _uiState.update { it.copy(isInitialized = false) }
+            if (_uiState.value.isEnabled && _uiState.value.hasModel) loadModel()
+        }
+    }
+
     fun setEnabled(enabled: Boolean) {
+        checkModelState()
         if (enabled && !_uiState.value.hasModel) {
             _uiState.update { it.copy(toastMessage = "请先下载模型文件") }
             return
@@ -157,93 +173,25 @@ class SmartPredictionSettingsViewModel(application: Application) : AndroidViewMo
     }
     
     fun downloadModelFiles() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(
-                isDownloading = true,
-                downloadProgress = 0f,
-                downloadStatus = "准备下载..."
-            )}
-            
-            try {
-                val baseUrl = _uiState.value.modelRepo.trimEnd('/')
-                val modelId = SettingsPreferences.getPredictionSelectedModel(context)
-
-                val modelDir = ModelStorage.getModelDir(context, modelId)
-                modelDir.mkdirs()
-                // 兼容旧版：下载前先把旧路径模型迁移到统一目录
-                ModelStorage.migrateLegacyForModel(context, modelId)
-
-                val filesToDownload = listOf(
-                    "vocab.json" to File(modelDir, "vocab.json"),
-                    "model_int8_dynamic.onnx" to File(modelDir, "model_int8_dynamic.onnx")
-                )
-                
-                val totalFiles = filesToDownload.size
-                
-                filesToDownload.forEachIndexed { index, (fileName, targetFile) ->
-                    _uiState.update { it.copy(
-                        downloadStatus = "下载 $fileName (${index + 1}/$totalFiles)..."
-                    )}
-                    
-                    withContext(Dispatchers.IO) {
-                        val downloadUrl = when {
-                            baseUrl.contains("modelscope.cn") -> {
-                                val cleanUrl = baseUrl.trimEnd('/')
-                                "$cleanUrl/resolve/master/$fileName"
-                            }
-                            else -> "$baseUrl/$fileName"
-                        }
-                        
-                        val conn = URL(downloadUrl).openConnection() as HttpURLConnection
-                        conn.connectTimeout = 30000
-                        conn.readTimeout = 120000
-                        conn.inputStream.use { input ->
-                            FileOutputStream(targetFile).use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-                    }
-                    
-                    _uiState.update { it.copy(
-                        downloadProgress = (index + 1).toFloat() / totalFiles
-                    )}
-                }
-                
-                _uiState.update { it.copy(
-                    downloadStatus = "下载完成",
-                    hasModel = true,
-                    toastMessage = "模型下载成功"
-                )}
-                
-                if (_uiState.value.isInitialized) {
-                    releaseModel()
-                }
-                
-                if (_uiState.value.isEnabled) {
-                    loadModel()
-                }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(
-                    downloadStatus = "下载失败: ${e.message}",
-                    toastMessage = "下载失败: ${e.message}"
-                )}
-            } finally {
-                _uiState.update { it.copy(
-                    isDownloading = false,
-                    downloadProgress = 0f,
-                    downloadStatus = ""
-                )}
-            }
-        }
+        val id = SettingsPreferences.getPredictionSelectedModel(context)
+        val base = _uiState.value.modelRepo.trimEnd('/')
+        val prefix = if (base.contains("modelscope.cn")) "$base/resolve/master" else base
+        val model = ModelManager.getModel(id) ?: com.kingzcheung.xime.model.ModelInfo(
+            id, "智能联想", "", com.kingzcheung.xime.model.ModelCategory.PREDICTION,
+            versions = listOf(com.kingzcheung.xime.model.ModelVersion(version = "custom",
+                files = listOf("vocab.json", "model_int8_dynamic.onnx").map {
+                    com.kingzcheung.xime.model.ModelFile(it, "$prefix/$it")
+                })))
+        ModelManager.downloadModelInBackground(context, model)
     }
-    
+
     fun deleteModel() {
         val modelId = SettingsPreferences.getPredictionSelectedModel(context)
         val modelDir = ModelStorage.getModelDir(context, modelId)
         val vocabFile = modelDir.resolve("vocab.json")
         val modelFile = modelDir.resolve("model_int8_dynamic.onnx")
-        vocabFile.delete()
-        modelFile.delete()
+        if (ModelManager.getModel(modelId) != null) ModelManager.deleteModel(context, modelId)
+        else { vocabFile.delete(); modelFile.delete(); ModelManager.notifyInstalledModelsChanged() }
         
         SettingsPreferences.setSmartPredictionEnabled(context, false)
         

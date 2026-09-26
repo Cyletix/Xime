@@ -12,6 +12,28 @@ if(T9_PRUNE_POS EQUAL -1)
   message(FATAL_ERROR "librime syllabifier changed: review T9 single-key recall patch")
 endif()
 string(REPLACE "${T9_PRUNE_OLD}" "${T9_PRUNE_NEW}" T9_SYLLABIFIER_CODE "${T9_SYLLABIFIER_CODE}")
+
+# Keep a legal final-syllable abbreviation in a numeric T9 input even if
+# another interpretation reaches the end using only complete syllables.
+# Examples: 583|3 = jue|d(e), 936|84|8 = wen|ti|t(ai).
+# Do NOT promote abbreviations to normal spellings or change ranking scores.
+# Earlier abbreviated edges and nonnumeric input retain the existing policy.
+set(T9_TAIL_GUARD_OLD "if (k->second.type > last_type) {")
+string(REGEX MATCHALL "if \\(k->second\\.type > last_type\\) \\{"
+       T9_TAIL_GUARD_MATCHES "${T9_SYLLABIFIER_CODE}")
+list(LENGTH T9_TAIL_GUARD_MATCHES T9_TAIL_GUARD_COUNT)
+if(NOT T9_TAIL_GUARD_COUNT EQUAL 2)
+  message(FATAL_ERROR "librime pruning changed: expected full and incremental T9 guards; review patch")
+endif()
+set(T9_TAIL_GUARD_NEW [=[const bool t9_tail_abbreviation =
+            k->second.type == kAbbreviation &&
+            j->first == input.size() &&
+            !input.empty() &&
+            input.find_first_not_of("23456789") == std::string::npos;
+        if (k->second.type > last_type && !t9_tail_abbreviation) {]=])
+string(REPLACE "${T9_TAIL_GUARD_OLD}" "${T9_TAIL_GUARD_NEW}"
+       T9_SYLLABIFIER_CODE "${T9_SYLLABIFIER_CODE}")
+
 string(REPLACE "#include \"syllabifier.h\"" "#include <rime/algo/syllabifier.h>" T9_SYLLABIFIER_CODE "${T9_SYLLABIFIER_CODE}")
 set(T9_SYLLABIFIER_COPY "${CMAKE_CURRENT_BINARY_DIR}/cyime-syllabifier.cc")
 file(CONFIGURE OUTPUT "${T9_SYLLABIFIER_COPY}" CONTENT "${T9_SYLLABIFIER_CODE}" @ONLY)

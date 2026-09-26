@@ -25,10 +25,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
+internal const val KEY_GLOW_DURATION_MS = 500
+
 private data class GlowSquare(val x: Float, val y: Float, val side: Float, val angle: Float, val spin: Float)
 
 /** Transform only the cap/shadow, inside the unchanged key hit target. */
-internal fun Modifier.keyGlow(cap: Modifier): Modifier = composed {
+internal fun Modifier.keyGlow(cap: Modifier, animateCap: Boolean = true): Modifier = composed {
     if (!LocalKeyboardInputPreferences.current.keyGlowEnabled) return@composed this.then(cap)
     // One coherent colour per press, as in the reference; overlapping squares
     // vary in brightness instead of mixing three unrelated theme colours.
@@ -53,11 +55,11 @@ internal fun Modifier.keyGlow(cap: Modifier): Modifier = composed {
                 elapsed.snapTo(0f)
                 // This is only the clock. Scale, travel and opacity each have their own
                 // continuous nonlinear curve below; none waits at an intermediate state.
-                elapsed.animateTo(1f, tween(500, easing = LinearEasing))
+                elapsed.animateTo(1f, tween(KEY_GLOW_DURATION_MS, easing = LinearEasing))
             }
         }
     }.graphicsLayer {
-        val scale = keyGlowScale(elapsed.value)
+        val scale = if (animateCap) keyGlowScale(elapsed.value) else 1f
         scaleX = scale
         scaleY = scale
     }.then(cap).drawWithCache {
@@ -143,7 +145,7 @@ internal fun keyGlowSquareSize(t: Float): Float = 0.3f + 0.7f * (1f - t.coerceIn
 /** Opacity has an independent smooth tail across the complete 500 ms. */
 internal fun keyGlowRemaining(t: Float): Float {
     val remaining = 1f - t.coerceIn(0f, 1f)
-    return remaining * remaining
+    return remaining * remaining * (3f - 2f * remaining)
 }
 
 /** Rotation and outward travel start fast and decelerate continuously. */

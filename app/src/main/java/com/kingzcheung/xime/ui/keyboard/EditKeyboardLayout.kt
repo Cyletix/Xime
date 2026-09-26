@@ -173,16 +173,16 @@ fun EditKeyboardLayout(
                     }
                     Box(Modifier.align(Alignment.Center).size(padDiameter).padding(inset)
                         .testTag("editor-direction-pad").drawBehind { drawCircle(padColor) })
-                    Column(Modifier.align(Alignment.Center).size(padDiameter).testTag("editor-pad-controls")) {
-                        listOf(listOf("", "up", ""), listOf("left", "select", "right"),
-                            listOf("", "down", "")).forEach { row ->
-                            Row(Modifier.weight(1f).fillMaxWidth()) {
-                                row.forEach { command ->
-                                    val cell = Modifier.weight(1f).fillMaxHeight()
-                                    if (command.isEmpty()) Spacer(cell) else key(command, cell)
-                                }
-                            }
+                    Box(Modifier.align(Alignment.Center).size(padDiameter).testTag("editor-pad-controls")) {
+                        val labelDistance = padDiameter / 3
+                        listOf("up", "right", "down", "left").forEach { direction ->
+                            val sector = EditorDirectionSector(direction, inset)
+                            key(direction, Modifier.fillMaxSize().clip(sector),
+                                cutout = sector,
+                                offsetX = when (direction) { "left" -> -labelDistance; "right" -> labelDistance; else -> 0.dp },
+                                offsetY = when (direction) { "up" -> -labelDistance; "down" -> labelDistance; else -> 0.dp })
                         }
+                        key("select", Modifier.align(Alignment.Center).size(padDiameter / 3))
                     }
                 }
             }
@@ -212,6 +212,27 @@ internal fun editorCornerContentOffset(width: Float, height: Float, circleX: Flo
         if (fits(start + (target - start) * mid)) high = mid else low = mid
     }
     return (target - start) * high
+}
+
+/** A 90-degree direction sector, excluding the centre selection key's square. */
+internal data class EditorDirectionSector(val direction: String, val inset: Dp = 0.dp) : Shape {
+    override fun createOutline(size: androidx.compose.ui.geometry.Size,
+        layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+        density: androidx.compose.ui.unit.Density): Outline {
+        val diameter = size.minDimension
+        val center = Offset(size.width / 2, size.height / 2)
+        val radius = (diameter / 2 - with(density) { inset.toPx() }).coerceAtLeast(0f)
+        val start = when (direction) { "up" -> 225f; "right" -> 315f; "down" -> 45f; else -> 135f }
+        val wedge = Path().apply {
+            moveTo(center.x, center.y)
+            arcTo(Rect(center.x - radius, center.y - radius, center.x + radius, center.y + radius), start, 90f, false)
+            close()
+        }
+        val halfCenter = diameter / 6
+        val hole = Path().apply { addRect(Rect(center.x - halfCenter, center.y - halfCenter,
+            center.x + halfCenter, center.y + halfCenter)) }
+        return Outline.Generic(Path.combine(PathOperation.Difference, wedge, hole))
+    }
 }
 
 private data class EditorPadCutout(val x: Dp, val y: Dp, val radius: Dp) : Shape {
@@ -283,11 +304,11 @@ internal fun EditorActionKey(
                 }
             })
         }
-        .padding(scaledKeyVisualPadding(PaddingValues(2.dp)))
+        .padding(if (plain) PaddingValues(0.dp) else scaledKeyVisualPadding(PaddingValues(2.dp)))
         .keyGlow(Modifier.then(if (visualShape != null) Modifier.clip(visualShape) else Modifier)
         .then(shadowModifier)
         .clip(RoundedCornerShape(LocalKeyCornerRadius.current))
-        .background(if (pressed) foreground.copy(alpha = 0.18f) else background)), contentAlignment = Alignment.Center) {
+        .background(if (pressed) foreground.copy(alpha = 0.18f) else background), animateCap = !plain), contentAlignment = Alignment.Center) {
         Column(Modifier.offset(contentOffsetX, contentOffsetY).testTag("editor-label-$label"),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             val scale = (LocalKeyboardKeyContentScale.current ?: 1f).let { if (compact) it.coerceAtMost(1.15f) else it }

@@ -15,6 +15,7 @@ apply(from = "build-logic/tasks-speech.gradle.kts")
 apply(from = "build-logic/tasks-plugin-dev.gradle.kts")
 apply(from = "build-logic/tasks-japanese.gradle.kts")
 apply(from = "build-logic/tasks-chinese.gradle.kts")
+apply(from = "build-logic/tasks-rime-manifest.gradle.kts")
 
 // 获取 Git 提交哈希
 fun getGitHash(): String {
@@ -42,6 +43,7 @@ android {
     namespace = "com.kingzcheung.xime"
     sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/japanese-assets").get().asFile)
     sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/chinese-assets").get().asFile)
+    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/rime-manifest").get().asFile)
     sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/speech-assets").get().asFile)
     compileSdk = 36
 

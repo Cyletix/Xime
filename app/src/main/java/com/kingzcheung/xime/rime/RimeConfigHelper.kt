@@ -48,14 +48,15 @@ object RimeConfigHelper {
         }
         
         copyAssetsToRimeDir(context, rimeDir)
-        com.kingzcheung.xime.settings.JapaneseSchemas.installAssets(context, rimeDir)
-        com.kingzcheung.xime.settings.ChineseSchemas.installAssets(context, rimeDir)
+        com.kingzcheung.xime.settings.BundledRimeSync.install(
+            rimeDir, File(context.filesDir, "rime-upgrade-backups"),
+            context.assets.open("rime-bundled-manifest.tsv").bufferedReader().use { it.readText() },
+        ) { context.assets.open(it) }
         // F1: assets 会用内置 default.yaml 覆盖，这里把启用方案重新写回 schema_list
         SchemaManager.applyEnabledSchemasToDefaultYaml(context)
         // 为所有启用方案打个人词库补丁
         PersonalDictManager.ensureSchemaPacks(context)
-        // 不再在初始化阶段删 build：build 是否重建统一由 ensureDeployment()
-        // 按增量优先策略决定，避免配置变化即全量重编译（60MB 词库持锁 30s+）。
+        // 内置资源发生替换时已失效旧编译缓存；其它配置变动仍由 ensureDeployment 增量处理。
 
         Pair(rimeDir.absolutePath, rimeDir.absolutePath)
     }

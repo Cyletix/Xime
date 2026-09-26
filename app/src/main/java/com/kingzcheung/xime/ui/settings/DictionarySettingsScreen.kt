@@ -238,7 +238,7 @@ private fun UsageHint() {
     val uriHandler = LocalUriHandler.current
     Column(
         modifier = Modifier
-            .clickable { uriHandler.openUri("https://ime.ximei.me/features/dictionary.html") }
+            .clickable { uriHandler.openUri("https://github.com/Cyletix/CyIME/blob/main/docs/usage.md#词库与升级") }
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {

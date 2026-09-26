@@ -355,9 +355,9 @@ fun SettingsMainContent(
                     SettingsItem(
                         icon = Icons.TwoTone.Description,
                         title = "使用文档",
-                        subtitle = "ime.ximei.me",
+                        subtitle = "CyIME 使用说明",
                         onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://ime.ximei.me"))
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Cyletix/CyIME/blob/main/docs/usage.md"))
                             context.startActivity(intent)
                         },
                         showArrow = true

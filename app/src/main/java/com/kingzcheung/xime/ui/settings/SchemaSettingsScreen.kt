@@ -138,7 +138,7 @@ fun SchemaSettingsContent(
             text = {
                 Column {
                     Text(
-                        "使用导入方案功能时，请先去了解 Rime 配置方案以及相关文档（ime.ximei.me），并确保你知道自己正在做什么。",
+                        "使用导入方案功能时，请先去了解 Rime 配置方案以及相关文档（github.com/rime/home/wiki），并确保你知道自己正在做什么。",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -262,7 +262,7 @@ fun SchemaSettingsContent(
                     )
                 ) {
                     Text(
-                        text = "使用导入方案功能时，请先了解 Rime 配置方案以及文档（ime.ximei.me），以及确保你知道自己正在做什么。如果你不知道自己在做什么，请使用默认方案。",
+                        text = "使用导入方案功能时，请先了解 Rime 配置方案以及文档（github.com/rime/home/wiki），以及确保你知道自己正在做什么。如果你不知道自己在做什么，请使用默认方案。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(12.dp)

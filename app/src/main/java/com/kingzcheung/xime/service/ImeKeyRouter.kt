@@ -34,12 +34,11 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         result: com.kingzcheung.xime.rime.RimeProcessResult,
         afterUpdate: (suspend () -> Unit)? = null,
     ) {
-        // 日语罗马音：末尾尚未拼完的输入显示按下的字母（引擎回显会给 っ / ん）
-        val displayed = service.japaneseInputController.withDisplayPreedit(result)
-        val transformed = service.candidateTransform.transformFor(displayed)
+        // 日语罗马音的显示归一化收口在 updateUIWithResult（刷新路径同样生效），此处不再单独加工
+        val transformed = service.candidateTransform.transformFor(result)
         service.uiEventChannel.trySend {
             service.sessionController.updateUIWithResult(
-                transformed?.let { displayed.copy(candidates = it.candidates.toTypedArray()) } ?: displayed,
+                transformed?.let { result.copy(candidates = it.candidates.toTypedArray()) } ?: result,
                 transformed?.actions ?: emptyList()
             )
             if (afterUpdate != null) afterUpdate()
@@ -215,7 +214,8 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                 }
                 "clear_all" -> {
                     // 上滑清空 = 多次退格快捷方式（对标主流输入法）：输入态只清输入态，空闲态清空全部已上屏。
-                    // 输入态判定见 hasInputState()——不能用 RIME getInput()，tryLocked 锁竞争时静默返回空。
+                    // 引擎繁忙时不把未知状态当成空闲，更不能清正文。
+                    if (service.rimeEngine.compositionActiveForDeletion() == null) return@launch
                     if (hasInputState(candState)) {
                         // 输入态：只清输入态（等价于 clear_composition），并记录 lastClearedText 供下滑撤回。
                         // 需在 clearInputStateForKeys() 之前记录（该函数会清空 preeditText/inputText）。
@@ -773,9 +773,10 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
      * 也保持与其它按键的相对顺序——合并的退格会在夹在中间的字母键之后执行。
      */
     internal fun launchDeleteJob() {
+        val owner = service.uiState.value.inputSessionId
         val job = service.serviceScope.launch(service.keyProcessingDispatcher, start = CoroutineStart.LAZY) {
             try {
-                processDeleteKey()
+                if (owner == service.uiState.value.inputSessionId) processDeleteKey()
             } catch (t: Throwable) {
                 FileLogger.e(XimeInputMethodService.TAG, "processDeleteKey failed", t)
             } finally {
@@ -803,16 +804,29 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
 
     /** 单次退格处理（service.keyProcessingDispatcher 上执行）。 */
     internal suspend fun processDeleteKey() {
+        val owner = service.uiState.value.inputSessionId
         // 快捷发送表单显示：退格按焦点路由到表单内 EditText（与单击退格同一路径），不进入 Rime
         if (service.uiState.value.showQuickSendForm) {
-            withContext(Dispatchers.Main) { service.deleteInQuickSendForm() }
+            withContext(Dispatchers.Main) {
+                if (owner != service.uiState.value.inputSessionId) return@withContext
+                service.deleteInQuickSendForm()
+            }
             return
         }
         if (service.japaneseInputController.deleteKana()) return
         val candState = service.candidateState.value
         // 退格改变输入上下文：使在途的联想预测结果失效，防止过期结果迟到回填
         // associationCandidates，导致长按退格删除时候选栏在"联想词↔空"之间闪动。
-        service.predictionManager.invalidatePendingPredictions()
+        val predictionWasPending = service.predictionManager.invalidatePendingPredictions()
+        val target = deletionTarget(
+            engineComposing = service.rimeEngine.compositionActiveForDeletion(),
+            uiComposing = candState.isComposing || candState.inputText.isNotEmpty() || candState.preeditText.isNotEmpty(),
+            partialSegments = service.t9PartialSegments.isNotEmpty(),
+            pendingEnglish = candState.pendingEnglishText.isNotEmpty(),
+            candidatesVisible = candState.associationCandidates.isNotEmpty() || candState.isShowingRecentClipboard,
+            predictionPending = predictionWasPending,
+        )
+        if (target == DeletionTarget.WAIT) return
         // 计算器模式：追踪退格
         service.calculatorEngine.handleDelete()
         updateCalculatorCandidates()
@@ -820,16 +834,19 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         // 数字/符号键盘：直接发送系统退格，不经过 Rime
         // 防止 T9 残留状态被 Rime 退格修改导致 UI 不一致
         val layoutState = service.keyboardViewModel.keyboardState.value
-        if (layoutState is KeyboardLayoutState.Number || layoutState is KeyboardLayoutState.Symbol) {
+        if ((layoutState is KeyboardLayoutState.Number || layoutState is KeyboardLayoutState.Symbol) &&
+            target == DeletionTarget.DOCUMENT) {
             withContext(Dispatchers.Main) {
+                if (owner != service.uiState.value.inputSessionId) return@withContext
                 service.sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
             }
         } else when {
             // 1. 英文待处理文本：逐个删除字符，重新加载联想
-            candState.pendingEnglishText.isNotEmpty() -> {
+            target == DeletionTarget.ENGLISH -> {
                 val newPending = candState.pendingEnglishText.dropLast(1)
                 if (newPending.isNotEmpty()) {
                     withContext(Dispatchers.Main) {
+                        if (owner != service.uiState.value.inputSessionId) return@withContext
                         service.sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                         service.candidateState.value = service.candidateState.value.copy(
                             pendingEnglishText = newPending,
@@ -843,12 +860,16 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                         service.serviceScope.launch {
                             val candidates = service.predictionManager.getEnglishAssociations(newPending, PredictionManager.MAX_ASSOCIATION_COUNT)
                             withContext(Dispatchers.Main) {
-                                service.candidateState.value = service.candidateState.value.copy(associationCandidates = candidates)
+                                if (owner != service.uiState.value.inputSessionId) return@withContext
+                                if (service.candidateState.value.pendingEnglishText == newPending) {
+                                    service.candidateState.value = service.candidateState.value.copy(associationCandidates = candidates)
+                                }
                             }
                         }
                     }
                 } else {
                     withContext(Dispatchers.Main) {
+                        if (owner != service.uiState.value.inputSessionId) return@withContext
                         service.sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                         service.candidateState.value = service.candidateState.value.copy(
                             pendingEnglishText = "",
@@ -865,20 +886,21 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
             }
 
             // 2. Rime 编码中：让 Rime 处理退格，更新候选
-            candState.isComposing || candState.inputText.isNotEmpty() -> {
-                service.rimeEngine.processKey(0xff08, 0)
-                val result = service.rimeEngine.getProcessResult(true)
+            target == DeletionTarget.COMPOSITION -> {
+                val result = service.rimeEngine.processQueuedKeyAndGetResult(0xff08, 0)
+                if (owner != service.uiState.value.inputSessionId) return
                 if (result.inputText.isEmpty()) {
                     service.rimeEngine.clearComposition()
                     // T9 部分提交：剩余编码删完后，已上屏/ composing 的部分候选词无法用
                     // RIME 退格删除，会一直卡在候选栏。这里撤销最近一次部分提交：
-                    // 清空 composing 区域（或删除上屏文本）并从累积列表移除。
+                    // 清空自己持有的 composing 区域并从累积列表移除，不删除宿主正文。
                     if (service.t9PartialSegments.isNotEmpty()) {
                         // 已撤销段只存在于输入法状态（候选栏/输入框 composing 的显示），
                         // 从未上屏到正文：候选栏模式不能按段文本长度删宿主文本，
                         // 否则会误删光标前的正文（2026-09-25 真机实证）。
                         val removed = service.t9PartialSegments.rollbackPartialSegments(1)
                         withContext(Dispatchers.Main) {
+                            if (owner != service.uiState.value.inputSessionId) return@withContext
                             if (SettingsPreferences.getInputTextLocation(service)
                                 == SettingsPreferences.INPUT_TEXT_INPUT_BOX) {
                                 service.endComposingInputBox()
@@ -900,7 +922,7 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
             }
 
             // 3. 联想词或剪贴板：仅清空候选栏，不回删已上屏字符
-            candState.associationCandidates.isNotEmpty() || candState.isShowingRecentClipboard -> {
+            target == DeletionTarget.CANDIDATES -> {
                 service.candidateState.value = service.candidateState.value.copy(
                     candidates = emptyList(),
                     candidateComments = emptyList(),
@@ -916,6 +938,8 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                 service.predictionManager.deleteLastChar()
 
                 withContext(Dispatchers.Main) {
+
+                    if (owner != service.uiState.value.inputSessionId) return@withContext
                     service.sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                 }
 
@@ -1161,7 +1185,10 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
             candState.inputText.isNotEmpty() ||
             candState.preeditText.isNotEmpty() ||
             candState.pendingEnglishText.isNotEmpty() ||
-            service.t9PartialSegments.isNotEmpty()
+            service.t9PartialSegments.isNotEmpty() ||
+            service.rimeEngine.compositionActiveForDeletion() != false ||
+            candState.associationCandidates.isNotEmpty() || candState.isShowingRecentClipboard ||
+            service.predictionManager.hasPendingPrediction
 
     /**
      * 清空输入态（预编辑/候选/联想/partial 累积/计算器），不动已上屏文本。
@@ -1171,6 +1198,7 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
      * 输入框模式清 composing 区；T9 方案重置左侧候选区（其他键盘无左栏，跳过）。
      */
     private suspend fun clearInputStateForKeys() {
+        service.predictionManager.invalidatePendingPredictions()
         service.calculatorEngine.clear()
         updateCalculatorCandidates()
         service.t9PartialSegments.clear()

@@ -7,6 +7,21 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class LatestPredictionTest {
+    @Test fun pendingPredictionIsVisibleDuringDebounceAndConsumedOnce() = runTest {
+        val output = mutableListOf<String>()
+        val worker = LatestPrediction(backgroundScope, { listOf(it) }, { output += it })
+        worker.submit("正在等待")
+        assertTrue(worker.isPending)
+        assertTrue(worker.invalidate())
+        assertFalse(worker.invalidate())
+        advanceTimeBy(300); runCurrent()
+        assertTrue(output.isEmpty())
+        worker.submit("新请求")
+        advanceTimeBy(300); runCurrent()
+        assertEquals(listOf("新请求"), output)
+        assertFalse(worker.isPending)
+    }
+
     @Test fun burstRunsOnlyLatestAndInvalidationDropsResult() = runTest {
         val calls = mutableListOf<String>(); val output = mutableListOf<String>()
         val worker = LatestPrediction(backgroundScope, { calls += it; delay(20); listOf(it) }, { output += it }, { testScheduler.currentTime })

@@ -396,12 +396,14 @@ class T9InputController(
 
     /** 单次退格：processKey → flush → 撤销计数 → 取全量结果 → Main 刷新 + 回调。 */
     private suspend fun processDelete(callback: (DeleteResult) -> Unit) {
+        val composingBefore = rimeEngine.compositionActiveForDeletion()
         val result = rimeEngine.processQueuedT9Key(0xff08)
         val undoneCount = rimeEngine.t9GetAndConsumeUndoneRightCommitCount()
         val data = fetchAll()
         val (finalResult, injections) = transformInjections(data.result)
         val composition = finalResult.toComposition()
-        val deleteResult = if (result) DeleteResult.DELETED else DeleteResult.NOT_CONSUMED
+        val deleteResult = if (t9DeleteConsumed(result, undoneCount, composingBefore))
+            DeleteResult.DELETED else DeleteResult.NOT_CONSUMED
         val gen = ++uiGeneration
         mainHandler.post {
             // 撤销计数与退格结果始终回调；仅当刷新仍是最新代际时应用，

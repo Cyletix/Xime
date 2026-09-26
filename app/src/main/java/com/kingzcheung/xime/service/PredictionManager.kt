@@ -41,9 +41,9 @@ class PredictionManager(
         catch (error: Exception) { Log.e(TAG, "Prediction failed", error); emptyList() }
     }, deliver = onPredictionResult)
 
-    fun invalidatePendingPredictions() {
-        latest.invalidate()
-    }
+    val hasPendingPrediction: Boolean get() = latest.isPending
+
+    fun invalidatePendingPredictions(): Boolean = latest.invalidate()
 
     /**
      * 单次联想抑制标志：联想候选上屏（点击/空格）前置位，使 commitText 触发的下一轮

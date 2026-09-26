@@ -357,6 +357,16 @@ class RimeEngine {
     private fun withDisplayPreedit(result: RimeProcessResult): RimeProcessResult = result.copy(
         preeditText = displayPreedit(result.inputText, result.preeditText, result.candidates.firstOrNull()?.comment.orEmpty()))
 
+    /** For destructive routing: null means busy/unavailable, never an empty composition. */
+    internal fun compositionActiveForDeletion(): Boolean? {
+        if (!isInitialized) return null
+        return tryLocked<Boolean?>(null) {
+            if (nativeIsMaintaining()) null
+            else if (!nativeHasSession()) false
+            else !nativeGetInput().isNullOrEmpty() || !nativeT9GetRemainingDigits().isNullOrEmpty()
+        }
+    }
+
     fun getInput(): String {
         return tryLocked("") {
             nativeGetInput() ?: ""
@@ -478,7 +488,8 @@ class RimeEngine {
         if (!isInitialized) return false
         return tryLocked(false) {
             if (!nativeHasSession() && !nativeCreateSession()) return@tryLocked false
-            nativeSetInput(input)
+            val japanese = !nativeIsAsciiMode() && nativeGetCurrentSchema() in setOf("japanese", "japanese_kana", "jaroomaji")
+            nativeSetInput(if (japanese) canonicalJapaneseRomaji(input) else input)
         }
     }
 

@@ -13,32 +13,42 @@ internal class LatestPrediction(
 ) {
     private val gate = Mutex()
     private var job: Job? = null
-    private var generation = 0L
+    @Volatile private var generation = 0L
+    private val pendingGeneration = java.util.concurrent.atomic.AtomicLong(0)
+    val isPending: Boolean get() = pendingGeneration.get() != 0L
     private var nextAllowed = 0L
 
-    fun invalidate() { generation++; job?.cancel(); job = null }
+    @Synchronized fun invalidate(): Boolean {
+        generation++
+        val pending = pendingGeneration.getAndSet(0L) != 0L
+        job?.cancel(); job = null
+        return pending
+    }
 
-    fun submit(text: String) {
+    @Synchronized fun submit(text: String) {
         invalidate()
         val request = generation
+        pendingGeneration.set(request)
         job = scope.launch {
-            delay(160) // Let a burst settle before starting expensive native inference.
-            gate.withLock {
-                delay((nextAllowed - now()).coerceAtLeast(0))
-                ensureActive()
-                val start = now()
-                try {
-                    val result = predict(text)
+            try {
+                delay(160) // Let a burst settle before starting expensive native inference.
+                gate.withLock {
+                    delay((nextAllowed - now()).coerceAtLeast(0))
                     ensureActive()
-                    if (request == generation) deliver(result)
-                } catch (cancelled: CancellationException) { throw cancelled }
-                finally {
-                    // A non-cancellable Binder call retains the gate until it returns.
-                    // Slow devices get a cooldown rather than a growing native queue.
-                    val elapsed = now() - start
-                    nextAllowed = now() + if (elapsed > 350) elapsed.coerceAtMost(1500) else 0
+                    val start = now()
+                    try {
+                        val result = predict(text)
+                        ensureActive()
+                        if (request == generation) deliver(result)
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    finally {
+                        // A non-cancellable Binder call retains the gate until it returns.
+                        // Slow devices get a cooldown rather than a growing native queue.
+                        val elapsed = now() - start
+                        nextAllowed = now() + if (elapsed > 350) elapsed.coerceAtMost(1500) else 0
+                    }
                 }
-            }
+            } finally { pendingGeneration.compareAndSet(request, 0L) }
         }
     }
 }

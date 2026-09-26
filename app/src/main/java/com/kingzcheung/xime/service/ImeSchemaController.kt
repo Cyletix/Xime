@@ -61,6 +61,11 @@ internal class ImeSchemaController(private val service: XimeInputMethodService) 
         // 由 ImeKeyRouter 在 key-processing 线程调用：toggleAsciiMode 阻塞等待 rimeLock
         // （部署/维护持锁时排队，完成后自动切换），不静默失败、不阻塞主线程。
         // 仅在 session 创建失败（引擎真正不可用）时返回 false。
+        if (!service.rimeEngine.isAsciiMode()) {
+            val id = service.rimeEngine.getCurrentSchema()
+            com.kingzcheung.xime.settings.InputModes.rememberMode(service, id,
+                com.kingzcheung.xime.settings.InputModes.languageOf(id, service.uiState.value.schemas))
+        }
         val t0 = System.nanoTime()
         if (!service.rimeEngine.toggleAsciiMode()) {
             FileLogger.e(XimeInputMethodService.TAG, "switchInputMethod: toggleAsciiMode FAILED (engine unavailable)")
@@ -350,7 +355,8 @@ internal class ImeSchemaController(private val service: XimeInputMethodService) 
                     service.keyboardViewModel.asciiStateMachine.reset()
                     service.keyboardViewModel.switchMain(com.kingzcheung.xime.keyboard.MainType.FULL)
                     service.keyboardViewModel.dispatch(com.kingzcheung.xime.ui.keyboard.KeyboardDispatchAction.AsciiModeChanged(true, engineSchema))
-                    if (engineSchema.isNotEmpty()) SettingsPreferences.setCurrentSchema(service, engineSchema)
+                    if (engineSchema.isNotEmpty()) SettingsPreferences.setCurrentSchema(service, engineSchema,
+                        com.kingzcheung.xime.settings.InputModes.languageOf(engineSchema, service.uiState.value.schemas))
                     service.uiState.value = service.uiState.value.copy(isAsciiMode = true)
                     service.sessionController.updateSchemaName()
                 }
@@ -375,7 +381,8 @@ internal class ImeSchemaController(private val service: XimeInputMethodService) 
             }
             service.keyboardViewModel.discardTemporaryHandwriting()
             service.previousSchemaId = service.rimeEngine.getCurrentSchema()
-            SettingsPreferences.setCurrentSchema(service, schemaId)
+            SettingsPreferences.setCurrentSchema(service, schemaId,
+                        com.kingzcheung.xime.settings.InputModes.languageOf(schemaId, service.uiState.value.schemas))
             service.keyboardViewModel.switchMain(com.kingzcheung.xime.keyboard.MainType.HANDWRITING)
             // 手写模型按"用键盘时加载"管理：切到手写方案即展示手写键盘，
             // 由 HandwritingKeyboardLayout 创建时（LaunchedEffect）负责加载，
@@ -402,7 +409,8 @@ internal class ImeSchemaController(private val service: XimeInputMethodService) 
                     val model = service.keyboardViewModel
                     model.discardTemporaryHandwriting()
                     model.asciiStateMachine.reset()
-                    SettingsPreferences.setCurrentSchema(service, schemaId)
+                    SettingsPreferences.setCurrentSchema(service, schemaId,
+                        com.kingzcheung.xime.settings.InputModes.languageOf(schemaId, service.uiState.value.schemas))
                     service.uiState.value = service.uiState.value.copy(isAsciiMode = false, currentSchemaId = schemaId)
                     model.switchMain(com.kingzcheung.xime.keyboard.MainType.FULL)
                     model.dispatch(com.kingzcheung.xime.ui.keyboard.KeyboardDispatchAction.AsciiModeChanged(false, schemaId))
@@ -471,26 +479,7 @@ internal class ImeSchemaController(private val service: XimeInputMethodService) 
     }
 
     internal fun toggleFloatingMode(enabled: Boolean, navBarDp: Int = 0, persist: Boolean = true) {
-        val isLandscape = service.resources.configuration.screenWidthDp > service.resources.configuration.screenHeightDp
-        if (persist) SettingsPreferences.setFloatingMode(service, enabled, isLandscape)
-        val loadedX = SettingsPreferences.getFloatingOffsetX(service, isLandscape)
-        val loadedY = SettingsPreferences.getFloatingOffsetY(service, isLandscape)
-        val screenW = service.resources.configuration.screenWidthDp
-        val screenH = service.resources.configuration.screenHeightDp
-        val portraitWidth = minOf(screenW, screenH)
-        val cardWidth = (portraitWidth * 0.85f).roundToInt()
-        val halfMargin = maxOf(0, (screenW - cardWidth) / 2)
-        val clampedX = loadedX.coerceIn(-halfMargin, halfMargin)
-        service.uiState.value = service.uiState.value.copy(
-            isFloatingMode = enabled,
-            floatingOffsetX = clampedX,
-            floatingOffsetY = 0,
-        )
-        if (enabled) {
-            service.closeToolPanel()
-        }
-        service.refreshKeyboardGeometry()
-        service.applyWindowBackground()
+        service.restoreKeyboardDisplayMode(enabled, navBarDp, persist)
     }
 
 }

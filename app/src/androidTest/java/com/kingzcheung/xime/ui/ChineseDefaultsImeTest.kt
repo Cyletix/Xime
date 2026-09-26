@@ -49,16 +49,7 @@ class ChineseDefaultsImeTest {
         rule.runOnUiThread { editor.requestFocus(); (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT) }
         rule.waitUntil(30_000) { rule.onAllNodesWithTag("language-key-control", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
         fun chooseMode(id: String) {
-            rule.waitForIdle()
-            val globe = rule.onAllNodesWithTag("language-key-control", useUnmergedTree = true).onLast()
-            globe.performTouchInput { down(center) }
-            rule.waitUntil(3000) { rule.onAllNodesWithTag("language-schema:$id").fetchSemanticsNodes().isNotEmpty() }
-            val choice = rule.onNodeWithTag("language-schema:$id")
-            choice.performScrollTo()
-            val target = choice.fetchSemanticsNode()
-            val key = globe.fetchSemanticsNode()
-            globe.performTouchInput { moveTo(target.positionOnScreen + Offset(target.size.width / 2f, target.size.height / 2f) - key.positionOnScreen); up() }
-            rule.waitUntil(10_000) { engine.getCurrentSchema() == id && !engine.isAsciiMode() }
+            rule.chooseModeThroughLanguageAndPanel(id)
         }
         fun typeAndCommit(labels: List<String>, screenshotName: String) {
             labels.forEach { rule.onNodeWithText(it, ignoreCase = true).performTouchInput { down(center); up() } }

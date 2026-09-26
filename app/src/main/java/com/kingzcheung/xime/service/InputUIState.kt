@@ -27,6 +27,8 @@ data class InputUIState(
     val resizePreviewWidthDp: Int = 0,
     /** 已保存的悬浮宽度（dp）；0 = 未设置，按高度推导（历史行为）。 */
     val floatingWidthDp: Int = 0,
+    val fixedWidthDp: Int = 0,
+    val fixedOffsetX: Int = 0,
     val resizeInitialFloating: Boolean = false,
     val resizeInitialSplit: Boolean = false,
     val resizeInitialX: Int = 0,

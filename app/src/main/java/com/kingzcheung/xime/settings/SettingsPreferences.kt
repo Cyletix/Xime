@@ -197,7 +197,8 @@ object SettingsPreferences {
         return "t9_pinyin"
     }
 
-    fun setCurrentSchema(context: Context, schemaId: String) {
+    fun setCurrentSchema(context: Context, schemaId: String, language: InputLanguage = InputLanguage.forSchema(schemaId)) {
+        InputModes.rememberMode(context, schemaId, language)
         // 双写：SharedPreferences 保证进程重建后不依赖 rime 即可恢复，
         // librime user.yaml 保持引擎侧状态一致（switchSchema 后由 librime 持久化）
         getPrefs(context).edit()
@@ -701,6 +702,19 @@ object SettingsPreferences {
     fun setFloatingWidthDp(context: Context, widthDp: Int, isLandscape: Boolean = false) {
         val key = if (isLandscape) KEY_FLOATING_WIDTH_DP_LANDSCAPE else KEY_FLOATING_WIDTH_DP
         getPrefs(context).edit().putInt(key, widthDp).apply()
+    }
+
+    /** 固定键盘横竖屏独立；0 宽度代表铺满宿主，偏移相对宿主中心。 */
+    fun getFixedWidthDp(context: Context, landscape: Boolean): Int =
+        getPrefs(context).getInt(if (landscape) "fixed_width_dp_landscape" else "fixed_width_dp", 0)
+
+    fun getFixedOffsetX(context: Context, landscape: Boolean): Int =
+        getPrefs(context).getInt(if (landscape) "fixed_offset_x_landscape" else "fixed_offset_x", 0)
+
+    fun setFixedHorizontalGeometry(context: Context, width: Int, offset: Int, landscape: Boolean) {
+        val suffix = if (landscape) "_landscape" else ""
+        getPrefs(context).edit().putInt("fixed_width_dp$suffix", width)
+            .putInt("fixed_offset_x$suffix", offset).apply()
     }
 
     fun getPageSize(context: Context): Int {

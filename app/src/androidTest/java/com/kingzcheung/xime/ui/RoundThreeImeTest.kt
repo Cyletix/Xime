@@ -82,19 +82,7 @@ class RoundThreeImeTest {
                 }
             }
             fun chooseMode(schemaId: String) {
-                // 先完成前一次按键触发的页面布局；冻结测试时钟会把旧页面的
-                // 语义节点保留到按下时，再在长按中途换页，造成测试自身取消手势。
-                rule.mainClock.autoAdvance = true
-                rule.waitForIdle()
-                val globe = rule.onAllNodesWithTag("language-key-control", useUnmergedTree = true).onLast()
-                globe.performTouchInput { down(center) }
-                rule.waitUntil(3_000) { rule.onAllNodesWithTag("language-schema:$schemaId").fetchSemanticsNodes().isNotEmpty() }
-                val choice = rule.onNodeWithTag("language-schema:$schemaId")
-                choice.performScrollTo()
-                val target = choice.fetchSemanticsNode()
-                val key = globe.fetchSemanticsNode()
-                val center = target.positionOnScreen + androidx.compose.ui.geometry.Offset(target.size.width / 2f, target.size.height / 2f)
-                globe.performTouchInput { moveTo(center - key.positionOnScreen); up() }
+                rule.chooseModeThroughLanguageAndPanel(schemaId)
             }
             showSchema("t9_pinyin")
             rule.waitUntil(30_000) { rule.onAllNodesWithText("符号").fetchSemanticsNodes().isNotEmpty() }
@@ -193,7 +181,7 @@ class RoundThreeImeTest {
 
             assertTrue("本回归需先安装市场手写模型", com.kingzcheung.xime.handwriting.HandwritingEngine.hasModel(context))
             val toolbarTop = rule.onNodeWithContentDescription("手写").fetchSemanticsNode().positionOnScreen.y
-            val stableToolbarLabels = listOf("方案选择", "表情", "编辑", "剪贴板", "手写", "语音")
+            val stableToolbarLabels = listOf("输入模式", "表情", "编辑", "剪贴板", "手写", "语音")
             val beforeHandwritingToolbar = stableToolbarLabels.map {
                 rule.onNodeWithContentDescription(it).fetchSemanticsNode().boundsInRoot
             }
@@ -406,7 +394,7 @@ class RoundThreeImeTest {
             rule.onNodeWithTag("keyboard-overlay").assertDoesNotExist()
 
             // 真实服务回调保存顺序，关闭重开后仍显示同一顺序。
-            rule.onNodeWithContentDescription("方案选择").performClick()
+            rule.onNodeWithContentDescription("输入模式").performClick()
             rule.onAllNodesWithContentDescription("返回").assertCountEquals(1)
             rule.onNodeWithText("调整顺序").performClick()
             rule.onNodeWithContentDescription("上移英文").performScrollTo().performClick()

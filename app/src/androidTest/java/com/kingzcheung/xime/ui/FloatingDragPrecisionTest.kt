@@ -32,7 +32,7 @@ class FloatingDragPrecisionTest {
             MaterialTheme {
                 Box(Modifier.size(340.dp, 328.dp)) {
                     FloatingKeyboardContainer(true, 0.85f, offsetX = 0, offsetY = y,
-                        availableHeightDp = 800,
+                        availableHeightDp = 800, contentHeightDp = 300,
                         onDrag = { _, dy ->
                             accumulatedY = (accumulatedY + dy).coerceAtLeast(0f)
                             y = accumulatedY.roundToInt()

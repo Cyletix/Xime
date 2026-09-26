@@ -39,7 +39,7 @@ class ToolbarOverlayWorkflowTest {
                 }
             }
         }
-        for (tool in listOf("方案选择", "编辑", "表情", "剪贴板")) {
+        for (tool in listOf("输入模式", "编辑", "表情", "剪贴板")) {
             rule.onNodeWithContentDescription(tool).performTouchInput { down(center); up() }
             rule.onNodeWithContentDescription(tool).assertIsDisplayed().assertIsSelected()
             val toolbar = rule.onNodeWithTag("toolbar-order-row").fetchSemanticsNode().boundsInRoot

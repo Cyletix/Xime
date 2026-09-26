@@ -140,20 +140,22 @@ internal enum class ResizeHandle {
  * 手柄命中：只认正在绘制的那一个矩形（[frame]）的边带，
  * 所以「看得见的边框」就是「拖得动的边框」，不存在两套坐标。
  *
- * 固定键盘只给上下边（左右边没有宽度语义，角退化为上/下边）。
+ * 固定和悬浮都支持左右及角手柄；固定底边保留底部留白语义。
  */
 internal fun resizeHandleAt(frame: ResizeRect, point: Offset, hitPx: Float, floating: Boolean): ResizeHandle {
     if (point.x < frame.left - hitPx || point.x > frame.right + hitPx) return ResizeHandle.NONE
     if (point.y < frame.top - hitPx || point.y > frame.bottom + hitPx) return ResizeHandle.NONE
     val top = point.y < frame.top + hitPx
     val bottom = point.y > frame.bottom - hitPx
-    val left = floating && point.x < frame.left + hitPx
-    val right = floating && point.x > frame.right - hitPx
+    val left = point.x < frame.left + hitPx
+    val right = point.x > frame.right - hitPx
     return when {
         top && left -> ResizeHandle.TOP_LEFT
         top && right -> ResizeHandle.TOP_RIGHT
         top -> ResizeHandle.TOP
-        // 悬浮键盘最下面永远是移动拖条：调节模式也只能移动，绝不拿它改高度。
+        bottom && left -> ResizeHandle.BOTTOM_LEFT
+        bottom && right -> ResizeHandle.BOTTOM_RIGHT
+        // 底部中央移动，底部两角仍沿对角线调整大小。
         floating && bottom -> ResizeHandle.NONE
         left -> ResizeHandle.LEFT
         right -> ResizeHandle.RIGHT
@@ -173,6 +175,31 @@ internal fun resizeCornerArcs(frame: ResizeRect, radiusPx: Float): List<ResizeCo
         ResizeCornerArc(Offset(frame.right - diameter, frame.top), 270f),
         ResizeCornerArc(Offset(frame.left, frame.bottom - diameter), 90f),
         ResizeCornerArc(Offset(frame.right - diameter, frame.bottom - diameter), 0f),
+    )
+}
+
+/**
+ * 四角对角线提示：每个角内侧沿 45° 的一小段线（↖ ↗ ↙ ↘）。
+ *
+ * 只做视觉提示，触摸热区仍由 [resizeHandleAt] 的边带决定，二者互不影响。
+ * 长度取 10~14dp，inset 与顶/侧手柄一致，避免压在卡片的圆角描边上。
+ */
+internal fun resizeCornerDiagonals(
+    frame: ResizeRect,
+    lengthPx: Float,
+    insetPx: Float,
+): List<Pair<Offset, Offset>> {
+    val length = lengthPx.coerceAtLeast(0f)
+    val inset = insetPx.coerceAtLeast(0f)
+    return listOf(
+        Offset(frame.left + inset, frame.top + inset) to
+            Offset(frame.left + inset + length, frame.top + inset + length),
+        Offset(frame.right - inset, frame.top + inset) to
+            Offset(frame.right - inset - length, frame.top + inset + length),
+        Offset(frame.left + inset, frame.bottom - inset) to
+            Offset(frame.left + inset + length, frame.bottom - inset - length),
+        Offset(frame.right - inset, frame.bottom - inset) to
+            Offset(frame.right - inset - length, frame.bottom - inset - length),
     )
 }
 

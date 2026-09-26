@@ -165,11 +165,19 @@ internal fun rememberImeKeyboardCallbacks(
                 service.keyboardViewModel.closeOverlay()
                 val config = service.resources.configuration
                 val isLandscape = config.screenWidthDp > config.screenHeightDp
-                val currentHeight = SettingsPreferences.getKeyboardHeightDp(service, isLandscape)
-                // 宽度基准取实际渲染的卡片宽度：左右边/四角从当前外观出发，不跳变。
-                val currentWidth = service.currentFloatingCardWidthDp.takeIf { it > 0 }
-                    ?: SettingsPreferences.getFloatingWidthDp(service, isLandscape).takeIf { it > 0 }
-                    ?: (minOf(config.screenWidthDp, config.screenHeightDp) * 0.85f).roundToInt()
+                val s = service.uiState.value
+                val currentHeight = com.kingzcheung.xime.settings.KeyboardHeightProfiles.selected(
+                    service, s.isFloatingMode, isLandscape, effectiveScreenH,
+                )
+                // 只有悬浮卡片测量值才可作为悬浮初值；固定模式保留独立的已保存宽度。
+                val wide = !com.kingzcheung.xime.ui.keyboard.isT9Schema(s.currentSchemaId) &&
+                    !com.kingzcheung.xime.ui.keyboard.isStrokeSchema(s.currentSchemaId) &&
+                    s.currentSchemaId != "japanese_kana"
+                val currentWidth = service.currentFloatingCardWidthDp.takeIf { s.isFloatingMode && it > 0 }
+                    ?: com.kingzcheung.xime.ui.keyboard.resolvedFloatingWidth(
+                        config.screenWidthDp, config.screenHeightDp, 0, 0, wide,
+                        SettingsPreferences.getFloatingWidthDp(service, isLandscape),
+                    )
                 service.uiState.value = service.uiState.value.copy(
                     showKeyboardResize = true,
                     resizePreviewHeightDp = currentHeight,
@@ -184,9 +192,11 @@ internal fun rememberImeKeyboardCallbacks(
             onSettings = { service.schemaController.openSettings() },
             onSwitchSchema = { schemaId -> service.schemaController.switchSchema(schemaId) },
             onReorderSchemas = { ids ->
-                com.kingzcheung.xime.settings.InputModes.saveOrder(service, ids)
+                val schemas = service.uiState.value.schemas
+                val order = com.kingzcheung.xime.settings.InputModes.mergeOrder(schemas.map { it.schemaId }, ids)
+                com.kingzcheung.xime.settings.InputModes.saveOrder(service, order)
                 service.uiState.value = service.uiState.value.copy(
-                    schemas = com.kingzcheung.xime.settings.InputModes.available(service.uiState.value.schemas, ids))
+                    schemas = com.kingzcheung.xime.settings.InputModes.available(schemas, order))
             },
             onHandwritingToggle = { service.schemaController.toggleHandwriting() },
             onToggleSchemaSwitch = { sw -> service.sessionController.toggleSchemaSwitch(sw) },
@@ -298,15 +308,18 @@ internal fun rememberImeKeyboardCallbacks(
             onFloatingModeChange = { enabled -> service.schemaController.toggleFloatingMode(enabled, floatingMinY, persist = !service.uiState.value.showKeyboardResize) },
             onFloatingKeyboardDrag = { dx, dy ->
                 val s = service.uiState.value
-                val screenW = service.resources.configuration.screenWidthDp
-                val screenH = if (state.isFloatingMode) effectiveScreenH else service.resources.configuration.screenHeightDp
-                val portraitWidth = minOf(screenW, service.resources.configuration.screenHeightDp)
-                val cardWidth = service.currentFloatingCardWidthDp.takeIf { it > 0 } ?: (portraitWidth * 0.85f).roundToInt()
-                val halfMargin = ((screenW - cardWidth) / 2f).roundToInt()
-                val newX = floatingDragX.move(s.floatingOffsetX, dx, -halfMargin, halfMargin)
+                val density = service.resources.displayMetrics.density
+                val screenW = (service.keyboardContainer.width / density).roundToInt().takeIf { it > 0 }
+                    ?: service.resources.configuration.screenWidthDp
+                val screenH = (service.keyboardContainer.height / density).roundToInt().takeIf { it > 0 }
+                    ?: effectiveScreenH
+                val cardWidth = service.currentFloatingCardWidthDp.takeIf { it > 0 }
+                    ?: s.floatingWidthDp.takeIf { it > 0 } ?: screenW
+                val halfMargin = ((screenW - cardWidth) / 2f).roundToInt().coerceAtLeast(0)
+                val newX = floatingDragX.move(s.floatingOffsetX.coerceIn(-halfMargin, halfMargin), dx, -halfMargin, halfMargin)
                 val actualCardH = if (service.currentFloatingCardHeightDp > 0) service.currentFloatingCardHeightDp else service.currentEffectiveKeyboardHeight
                 val maxOffsetY = (screenH - actualCardH).coerceAtLeast(floatingMinY)
-                val newY = floatingDragY.move(s.floatingOffsetY.coerceAtLeast(floatingMinY), dy, floatingMinY, maxOffsetY)
+                val newY = floatingDragY.move(s.floatingOffsetY.coerceIn(floatingMinY, maxOffsetY), dy, floatingMinY, maxOffsetY)
                 service.uiState.value = s.copy(
                     floatingOffsetX = newX,
                     floatingOffsetY = newY,

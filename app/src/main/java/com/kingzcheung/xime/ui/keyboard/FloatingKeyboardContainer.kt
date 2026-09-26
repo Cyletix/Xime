@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -78,6 +79,8 @@ internal fun FloatingKeyboardContainer(
     /** 调节模式中的唯一预览矩形；非空时直接决定真实卡片最终位置与尺寸。 */
     previewRect: ResizeRect? = null,
     onCardPositioned: (left: Int, top: Int, right: Int, bottom: Int) -> Unit = { _: Int, _: Int, _: Int, _: Int -> },
+    fixedWidthDp: Int = 0,
+    fixedOffsetX: Int = 0,
     keyboardContent: @Composable () -> Unit,
 ) {
     val density = LocalDensity.current
@@ -86,7 +89,15 @@ internal fun FloatingKeyboardContainer(
     // 这样控制面板可以放在键盘外面，边框也不会因为宿主高度变化而漂移。
     if (!isFloatingMode) {
         if (previewRect == null) {
-            keyboardContent()
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val width = if (fixedWidthDp > 0) fixedWidthDp.dp.coerceAtMost(maxWidth) else maxWidth
+                val travel = ((maxWidth - width) / 2f).value
+                Box(Modifier.align(Alignment.TopCenter)
+                    .absoluteOffset(x = fixedOffsetX.toFloat().coerceIn(-travel, travel).dp)
+                    .width(width).fillMaxSize().testTag("fixed-keyboard-card")) {
+                    keyboardContent()
+                }
+            }
         } else {
             val previewWidth = with(density) { previewRect.width.toDp() }
             val previewHeight = with(density) { previewRect.height.toDp() }
@@ -94,7 +105,7 @@ internal fun FloatingKeyboardContainer(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .offset { IntOffset(previewRect.left.roundToInt(), previewRect.top.roundToInt()) }
+                        .absoluteOffset { IntOffset(previewRect.left.roundToInt(), previewRect.top.roundToInt()) }
                         .size(previewWidth, previewHeight)
                         .testTag("fixed-keyboard-resize-preview")
                         .onGloballyPositioned { coords ->
@@ -124,17 +135,25 @@ internal fun FloatingKeyboardContainer(
         val previewWidthDp = previewRect?.let { with(density) { it.width.toDp() } }
         val previewHeightDp = previewRect?.let { with(density) { it.height.toDp() } }
         // 宿主在悬浮模式下可以是整屏；卡片高度必须来自键盘内容高度，而不是 BoxWithConstraints.maxHeight。
-        val normalCardHeight = (contentHeightDp.coerceAtLeast(1) + FLOATING_DRAG_BAR_HEIGHT_DP).dp
-        val cardTotalHeight = previewHeightDp ?: normalCardHeight
-        val horizontalTravel = (maxWidth.value * (1f - scaleFactor) / 2f).coerceAtLeast(0f)
-        val minimumY = minOffsetY.coerceAtLeast(0).toFloat()
-        val maxOffsetY = (screenHeightDp - cardTotalHeight.value).coerceAtLeast(minimumY)
-        val safeOffsetY = offsetY.toFloat().coerceIn(minimumY, maxOffsetY)
-        val positionedEdge = floatingDockEdge(offsetX.toFloat(), safeOffsetY, horizontalTravel, maxOffsetY, minOffsetY.toFloat())
+        val normalRect = floatingCardRect(
+            maxWidth.value * density.density, maxHeight.value * density.density,
+            maxWidth.value * scaleFactor * density.density,
+            (contentHeightDp.coerceAtLeast(1) + FLOATING_DRAG_BAR_HEIGHT_DP) * density.density,
+            offsetX * density.density, offsetY * density.density,
+            minOffsetY.coerceAtLeast(0) * density.density,
+        )
+        val cardRect = previewRect ?: normalRect
+        val cardTotalHeight = with(density) { cardRect.height.toDp() }
+        val horizontalTravel = ((maxWidth.value - normalRect.width / density.density) / 2f).coerceAtLeast(0f)
+        val minimumY = minOffsetY.coerceIn(0, maxHeight.value.roundToInt()).toFloat()
+        val maxOffsetY = (maxHeight.value - cardTotalHeight.value).coerceAtLeast(minimumY)
+        val safeOffsetY = (maxHeight.value - normalRect.bottom / density.density)
+        val safeOffsetX = (normalRect.centerX / density.density - maxWidth.value / 2f)
+        val positionedEdge = floatingDockEdge(safeOffsetX, safeOffsetY, horizontalTravel, maxOffsetY, minimumY)
         val dockGesture = remember(maxWidth, cardTotalHeight, screenHeightDp, minOffsetY) { FloatingDockGesture() }
         var isDragging by remember(dockGesture) { mutableStateOf(false) }
         var dockReady by remember(dockGesture) { mutableStateOf(false) }
-        var dragX by remember(dockGesture) { mutableFloatStateOf(offsetX.toFloat()) }
+        var dragX by remember(dockGesture) { mutableFloatStateOf(safeOffsetX) }
         var dragY by remember(dockGesture) { mutableFloatStateOf(safeOffsetY) }
         var dragEdge by remember(dockGesture) { mutableStateOf(positionedEdge) }
         var dockEpoch by remember(dockGesture) { mutableIntStateOf(0) }
@@ -181,17 +200,11 @@ internal fun FloatingKeyboardContainer(
                     .testTag("floating-dock-preview").semantics { stateDescription = if (dockReady) "ready" else "expanding" },
             )
         }
-        val cardPlacement = if (previewRect != null && previewWidthDp != null && previewHeightDp != null) {
-            Modifier
-                .align(Alignment.TopStart)
-                .offset { IntOffset(previewRect.left.roundToInt(), previewRect.top.roundToInt()) }
-                .size(previewWidthDp, previewHeightDp)
-        } else {
-            Modifier
-                .fillMaxWidth(scaleFactor)
-                .height(cardTotalHeight)
-                .offset(x = offsetX.dp, y = (-safeOffsetY).dp)
-        }
+        // 正常态和调节态共用 TopStart 放置，不在确认时重新换坐标系。
+        val cardPlacement = Modifier
+            .align(Alignment.TopStart)
+            .absoluteOffset { IntOffset(cardRect.left.roundToInt(), cardRect.top.roundToInt()) }
+            .size(with(density) { cardRect.width.toDp() }, with(density) { cardRect.height.toDp() })
         Box(
             modifier = cardPlacement
                 .clip(FloatingKeyboardCardShape)
@@ -224,7 +237,7 @@ internal fun FloatingKeyboardContainer(
                     onDragStart = {
                         dockEpoch++
                         dockReady = false
-                        dragX = offsetX.toFloat()
+                        dragX = safeOffsetX
                         dragY = safeOffsetY
                         dragEdge = positionedEdge
                         dockGesture.start(dragEdge, 0L)

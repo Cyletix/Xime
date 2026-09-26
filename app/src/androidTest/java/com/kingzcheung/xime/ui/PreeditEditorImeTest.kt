@@ -124,37 +124,7 @@ class PreeditEditorImeTest {
     }
 
     private fun chooseMode(id: String) {
-        val globe = rule.onAllNodesWithTag("language-key-control", useUnmergedTree = true).onLast()
-        // The key can be composed before the async schema list reaches the service UI.
-        // A change in hasMenu cancels a held pointerInput, so retry that cancelled hold.
-        var menuReady = false
-        repeat(2) {
-            if (!menuReady) {
-                globe.performTouchInput { down(center) }
-                try {
-                    rule.waitUntil(10_000) { rule.onAllNodesWithTag("language-schema:$id").fetchSemanticsNodes().isNotEmpty() }
-                    menuReady = true
-                } catch (_: androidx.compose.ui.test.ComposeTimeoutException) {
-                    screenshot("mode-$id-menu-not-ready")
-                    val tags = rule.onAllNodes(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.TestTag), useUnmergedTree = true)
-                        .fetchSemanticsNodes().map { it.config[androidx.compose.ui.semantics.SemanticsProperties.TestTag] }
-                    File(context.getExternalFilesDir(null), "mode-menu-tags.txt").writeText(tags.joinToString("\n"))
-                    globe.performTouchInput { cancel() }
-                }
-            }
-        }
-        assertTrue("language menu did not expose $id", menuReady)
-        val choice = rule.onNodeWithTag("language-schema:$id").performScrollTo().fetchSemanticsNode()
-        val key = globe.fetchSemanticsNode()
-        globe.performTouchInput {
-            moveTo(choice.positionOnScreen + Offset(choice.size.width / 2f, choice.size.height / 2f) - key.positionOnScreen)
-            up()
-        }
-        rule.waitUntil(10_000) {
-            if (id == InputModes.ENGLISH) engine.isAsciiMode()
-            else engine.getCurrentSchema() == id && !engine.isAsciiMode()
-        }
-        rule.waitForIdle()
+        rule.chooseModeThroughLanguageAndPanel(id)
     }
 
     private fun tap(label: String) {

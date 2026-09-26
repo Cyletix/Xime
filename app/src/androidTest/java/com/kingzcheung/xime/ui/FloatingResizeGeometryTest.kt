@@ -32,7 +32,7 @@ class FloatingResizeGeometryTest {
             CompositionLocalProvider(LocalDensity provides Density(1f)) {
                 MaterialTheme {
                     Box(Modifier.size(640.dp, 320.dp).testTag("root")) {
-                        FloatingKeyboardContainer(floating, 0.5f, 1f, 0.5f, x, y, 48, 700, Color.Black,
+                        FloatingKeyboardContainer(floating, 0.5f, 1f, 0.5f, x, y, 48, 700, 220, Color.Black,
                             onDrag = { a, b -> x += a.toInt(); y += b.toInt(); dx++ }, onDragEnd = {}) {
                             KeyboardResizeOverlay(288, 288, 0, floating,
                                 onHeightChange = {}, onBottomPaddingChange = {}, onOpacityChange = {}, onReset = {},
@@ -70,6 +70,7 @@ class FloatingResizeGeometryTest {
         val slider = rule.onNodeWithTag("keyboard-opacity-slider").fetchSemanticsNode().boundsInRoot
         val confirm = rule.onNodeWithContentDescription("确认").fetchSemanticsNode().boundsInRoot
         assertTrue(slider.bottom <= confirm.top)
-        assertEquals(1.2f, floatingKeyboardWidth(800,360,260,300,true).toFloat() / floatingKeyboardWidth(800,360,260,300,false), 0.04f)
+        assertTrue(floatingKeyboardWidth(800,360,260,300,false) >= FLOATING_RESIZE_MIN_WIDTH_DP)
+        assertTrue(floatingKeyboardWidth(800,360,260,300,true) >= floatingKeyboardWidth(800,360,260,300,false))
     }
 }

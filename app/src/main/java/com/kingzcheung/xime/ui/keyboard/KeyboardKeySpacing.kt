@@ -15,6 +15,9 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+/** 用户明确调整过固定宽度后，按实际宽度排键，不再自动收回屏幕中央。 */
+internal val LocalKeyboardExplicitWidth = staticCompositionLocalOf { false }
+
 /**
  * 当前键盘体的视觉度量（由布局策略算出）。
  *
@@ -48,7 +51,11 @@ internal fun KeyboardKeySpacingScope(
     BoxWithConstraints(modifier) {
         // 不铺 gutter 时（嵌套面板/编辑盘）：不加键宽上限，度量按真实格宽算，
         // 避免"按上限缩格"却又不把多出的宽度变成留白。
-        val effectivePolicy = if (applyGutter) policy else policy.copy(maxKeyWidth = Float.MAX_VALUE, minGutter = 0f)
+        val effectivePolicy = when {
+            !applyGutter -> policy.copy(maxKeyWidth = Float.MAX_VALUE, minGutter = 0f)
+            LocalKeyboardExplicitWidth.current -> policy.copy(maxKeyWidth = Float.MAX_VALUE)
+            else -> policy
+        }
         val metrics = keyVisualMetrics(
             policy = effectivePolicy,
             availableWidthDp = maxWidth.value * widthFraction,

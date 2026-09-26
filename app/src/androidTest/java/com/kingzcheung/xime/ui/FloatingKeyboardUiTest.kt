@@ -44,7 +44,7 @@ class FloatingKeyboardUiTest {
                 Box(Modifier.size(340.dp, 328.dp)) {
                     FloatingKeyboardContainer(
                         isFloatingMode = floating, scaleFactor = 0.85f, fontScaleFactor = 1f,
-                        offsetX = 0, offsetY = 0, onDrag = { _, _ -> }, onDragEnd = {},
+                        contentHeightDp = 300, offsetX = 0, offsetY = 0, onDrag = { _, _ -> }, onDragEnd = {},
                         onDock = { docks++; floating = false },
                     ) { Box(Modifier.fillMaxSize().testTag("keyboard-content")) }
                 }
@@ -213,7 +213,7 @@ class FloatingKeyboardUiTest {
             density = LocalDensity.current.density
             Box(Modifier.size(340.dp, 400.dp).testTag("floating-window")) {
                 FloatingKeyboardContainer(isFloatingMode = true, scaleFactor = 0.85f,
-                    offsetX = 0, offsetY = -60, minOffsetY = 48, availableHeightDp = 800,
+                    offsetX = 0, offsetY = -60, minOffsetY = 48, availableHeightDp = 800, contentHeightDp = 300,
                     onDrag = { _, _ -> }, onDragEnd = {}) {
                     Box(Modifier.fillMaxSize())
                 }
@@ -233,7 +233,7 @@ class FloatingKeyboardUiTest {
             density = LocalDensity.current.density
             Box(Modifier.size(340.dp, 328.dp).testTag("floating-window")) {
                 FloatingKeyboardContainer(true, 0.85f, offsetX = 0, offsetY = 48, minOffsetY = 48,
-                    availableHeightDp = 800, onDrag = { _, _ -> }, onDragEnd = {}) { Box(Modifier.fillMaxSize()) }
+                    availableHeightDp = 800, contentHeightDp = 300, onDrag = { _, _ -> }, onDragEnd = {}) { Box(Modifier.fillMaxSize()) }
             }
         }
         rule.onNodeWithTag("floating-drag-bar").performTouchInput { down(center); moveBy(Offset(24f * density, 0f)) }
@@ -249,7 +249,7 @@ class FloatingKeyboardUiTest {
             density = LocalDensity.current.density
             Box(Modifier.size(340.dp, 328.dp)) {
                 FloatingKeyboardContainer(true, 0.85f, offsetX = 0, offsetY = 80,
-                    availableHeightDp = 800, onDrag = { _, _ -> }, onDragEnd = {}, onDock = { docks++ }) {
+                    availableHeightDp = 800, contentHeightDp = 300, onDrag = { _, _ -> }, onDragEnd = {}, onDock = { docks++ }) {
                     Box(Modifier.fillMaxSize())
                 }
             }

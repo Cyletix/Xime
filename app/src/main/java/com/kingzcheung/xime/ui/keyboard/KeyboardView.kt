@@ -108,6 +108,9 @@ fun KeyboardView(
      * 此处只覆盖没有经过按键回调链路的点击交互，宿主按按键振动同款语义实现。
      */
     onHapticFeedback: (() -> Unit)? = null,
+    /** 固定键盘底边的系统留白，与 Service 正常显示分支完全相同。 */
+    fixedBottomInsetDp: Int = 0,
+    fixedHeightRange: IntRange? = null,
 ) {
     // 状态栏按钮走一次完整按键反馈，声音和振动均由用户设置控制。
     val toolbarFeedback = { callbacks.onKeyPressDown?.invoke("toolbar"); Unit }
@@ -276,6 +279,7 @@ fun KeyboardView(
     val inputPreferences = rememberKeyboardInputPreferences()
     var cursorControlActive by remember { mutableStateOf(false) }
     CompositionLocalProvider(
+        LocalKeyboardExplicitWidth provides (!state.isFloatingMode && (state.fixedWidthDp > 0 || resizeActive)),
         LocalModeSlotWeight provides if (
             page.textMainType() != MainType.HANDWRITING &&
             (textLayout is KeyboardLayoutState.Chinese || textLayout is KeyboardLayoutState.English) &&
@@ -319,87 +323,48 @@ fun KeyboardView(
         val hostHeightPx = with(resizeControlDensity) { maxHeight.toPx() }
         val dragBarPx = with(resizeControlDensity) { FLOATING_DRAG_BAR_HEIGHT_DP.dp.toPx() }
 
-        val hostLandscape = maxWidth > maxHeight
+        val hostLandscape = screenW > screenH
         val hostHeightDp = maxHeight.value.roundToInt().coerceAtLeast(1)
-        val seedPreviewRect = if (resizeActive && hostWidthPx > 1f && hostHeightPx > 1f) {
-            if (state.isFloatingMode) {
-                val floatingHeightBounds = floatingResizeHeightBounds(hostHeightDp, hostLandscape)
-                val contentHeightDp = state.keyboardHeightDp.coerceIn(floatingHeightBounds)
-                val totalHeightDp = contentHeightDp + FLOATING_DRAG_BAR_HEIGHT_DP
-                val minimumBottomOffsetDp = state.floatingMinOffsetY.coerceAtLeast(0)
-                val maximumBottomOffsetDp = (maxHeight.value - totalHeightDp)
-                    .coerceAtLeast(minimumBottomOffsetDp.toFloat())
-                val safeBottomOffsetDp = state.floatingOffsetY.toFloat()
-                    .coerceIn(minimumBottomOffsetDp.toFloat(), maximumBottomOffsetDp)
-                    .roundToInt()
-
-                val marginPx = with(resizeControlDensity) { 12.dp.toPx() }
-                val resizeBounds = ResizeRect(
-                    left = marginPx,
-                    top = marginPx,
-                    right = (hostWidthPx - marginPx).coerceAtLeast(marginPx + 1f),
-                    bottom = (hostHeightPx - marginPx).coerceAtLeast(marginPx + 1f),
-                )
-                val rawSeed = geometryToResizeRect(
-                    widthDp = cardWidthDp,
-                    heightDp = contentHeightDp,
-                    horizontalOffsetDp = state.floatingOffsetX,
-                    bottomOffsetDp = safeBottomOffsetDp,
-                    viewWidthPx = hostWidthPx,
-                    viewHeightPx = hostHeightPx,
-                    dragBarHeightPx = dragBarPx,
-                    density = resizeControlDensity.density,
-                ).coerceInside(resizeBounds)
-                // 历史设置可能留下“极窄 + 极高”的畸形尺寸。进入调节时只做一次安全夹紧，
-                // 保持中心/底边语义，不让旧状态把调节框直接撑成长柱。
-                val minWidthPx = with(resizeControlDensity) { FLOATING_RESIZE_MIN_WIDTH_DP.dp.toPx() }
-                val minHeightPx = with(resizeControlDensity) {
-                    (floatingHeightBounds.first + FLOATING_DRAG_BAR_HEIGHT_DP).dp.toPx()
-                }
-                val screenMaxHeightPx = with(resizeControlDensity) {
-                    (floatingHeightBounds.last + FLOATING_DRAG_BAR_HEIGHT_DP).dp.toPx()
-                }
-                rawSeed.coerceFloatingResizeSeed(
-                    bounds = resizeBounds,
-                    minWidth = minWidthPx,
-                    minHeight = minHeightPx,
-                    maxHeight = screenMaxHeightPx,
-                    maxAspect = floatingResizeMaxAspect(hostLandscape),
-                )
-            } else {
-                // 固定键盘调节也使用稳定的全屏坐标系：底边固定在宿主底部，只移动顶边改高度。
-                val fixedBounds = keyboardHeightBounds(hostHeightDp, hostLandscape)
-                val contentHeightDp = state.keyboardHeightDp.coerceIn(fixedBounds)
-                val heightPx = with(resizeControlDensity) { contentHeightDp.dp.toPx() }
-                ResizeRect(
-                    left = 0f,
-                    top = (hostHeightPx - heightPx).coerceAtLeast(0f),
-                    right = hostWidthPx,
-                    bottom = hostHeightPx,
-                )
-            }
-        } else null
-
-        var resizePreviewRect by remember(
-            resizeActive,
-            state.isFloatingMode,
-            maxWidth,
-            maxHeight,
-            cardWidthDp,
-            state.keyboardHeightDp,
-            state.floatingOffsetX,
-            state.floatingOffsetY,
-            state.floatingMinOffsetY,
-        ) { mutableStateOf(seedPreviewRect) }
-
-        val activePreviewRect = if (resizeActive) {
-            resizePreviewRect ?: seedPreviewRect
-        } else null
-
+        val fixedRange = fixedHeightRange ?: keyboardHeightBounds(screenH, hostLandscape)
+        val minBottomPx = state.floatingMinOffsetY.coerceAtLeast(0) * resizeControlDensity.density
+        val normalFloatingRect = floatingCardRect(
+            hostWidthPx = hostWidthPx,
+            hostHeightPx = hostHeightPx,
+            widthPx = (maxWidth.value * floatScaleFactor) * resizeControlDensity.density,
+            totalHeightPx = state.keyboardHeightDp * resizeControlDensity.density + dragBarPx,
+            horizontalOffsetPx = state.floatingOffsetX * resizeControlDensity.density,
+            bottomOffsetPx = state.floatingOffsetY * resizeControlDensity.density,
+            minBottomInsetPx = minBottomPx,
+        )
+        val seedPreviewRect = if (state.isFloatingMode) normalFloatingRect else fixedKeyboardRect(
+            hostWidthPx, hostHeightPx,
+            state.keyboardHeightDp.coerceIn(fixedRange) * resizeControlDensity.density,
+            state.keyboardBottomPaddingDp.coerceAtLeast(0) * resizeControlDensity.density,
+            fixedBottomInsetDp.coerceAtLeast(0) * resizeControlDensity.density,
+            widthPx = if (state.fixedWidthDp > 0) state.fixedWidthDp * resizeControlDensity.density else hostWidthPx,
+            horizontalOffsetPx = state.fixedOffsetX * resizeControlDensity.density,
+        )
+        // 只在进入调节、切模式或视口变化时创建事务。主题/透明度/偏好监听不能重置它。
+        val sessionKey = listOf(resizeActive, state.isFloatingMode, maxWidth, maxHeight)
+        val initialPreviewRect = remember(sessionKey) { seedPreviewRect }
+        val initialPadding = remember(sessionKey) { state.keyboardBottomPaddingDp }
+        var resizePreviewRect by remember(sessionKey) { mutableStateOf(initialPreviewRect) }
+        var resizePaddingDp by remember(sessionKey) { mutableIntStateOf(initialPadding) }
+        val activePreviewRect = if (resizeActive) resizePreviewRect else null
+        val renderedBottomPaddingDp = if (resizeActive && !state.isFloatingMode)
+            resizePaddingDp else state.keyboardBottomPaddingDp
         val resizePreviewSession = KeyboardResizePreviewState(
             rect = activePreviewRect,
-            initialRect = seedPreviewRect,
+            initialRect = initialPreviewRect,
             onRectChange = { resizePreviewRect = it },
+            bounds = if (state.isFloatingMode) floatingViewportBounds(hostWidthPx, hostHeightPx, minBottomPx)
+                else ResizeRect(0f, 0f, hostWidthPx,
+                    (hostHeightPx - fixedBottomInsetDp * resizeControlDensity.density).coerceAtLeast(1f)),
+            fixedHeightRange = fixedRange,
+            fixedBottomInsetDp = fixedBottomInsetDp,
+            bottomPaddingDp = renderedBottomPaddingDp,
+            initialBottomPaddingDp = initialPadding,
+            onBottomPaddingChange = { resizePaddingDp = it },
         )
 
     FloatingKeyboardContainer(
@@ -413,6 +378,8 @@ fun KeyboardView(
         minOffsetY = state.floatingMinOffsetY,
         availableHeightDp = state.floatingScreenHeightDp,
         contentHeightDp = state.keyboardHeightDp,
+        fixedWidthDp = state.fixedWidthDp,
+        fixedOffsetX = state.fixedOffsetX,
         backgroundColor = keyboardBgColor,
         onDrag = { dx, dy -> callbacks.onFloatingKeyboardDrag?.invoke(dx, dy) },
         onDragEnd = { callbacks.onFloatingKeyboardDragEnd?.invoke() },
@@ -829,21 +796,8 @@ fun KeyboardView(
                         else -> null
                     }
                 }
-                // 九键左栏复刻：输入/选择态显示音节拼音候选（与键盘左栏同源，
-                // 点击切换音节后服务层重拉全量候选刷新本页），空闲态回落 side_symbols；
-                // 左栏宽度与九键键盘左栏视觉同宽：九键竖屏根容器有左右各 4dp 边距
-                // （padding start/end 4dp），Row 内 spacedBy(2dp)×2，weight 基数 =
-                // 屏宽-8-4；左栏列 = 基数×0.8/5，面板再带 LocalKeyVisualPadding
-                // 水平缩进（keySpacingX ?: 2dp）——展开页左栏为全宽背景，同额扣除
-                // （横屏九键无左栏不缩放）
+                // 九键侧栏宽度由 CandidatePage 按实际面板宽度计算，不能使用整屏宽度。
                 val isT9Layout = keyboardState is KeyboardLayoutState.T9Pinyin
-                val t9RailWidthDp = if (isT9Layout && !isLandscape) {
-                    val railInset = kbKey.spacingFor("t9").first ?: 2f
-                    ((LocalConfiguration.current.screenWidthDp - 12) * 0.8f / 5f -
-                        railInset * 2f + 0.5f).toInt().coerceAtLeast(32)
-                } else 0
-                // 左栏垂直缩进与九键左栏面板同源（keySpacingY ?: 2dp），展开/收起
-                // 切换时左栏顶部不跳位；其余布局 6dp = 原 Row 垂直边距
                 val t9RailInsetDp = if (isT9Layout && !isLandscape)
                     (kbKey.spacingFor("t9").second ?: 2f).toInt() else 6
                 val railPinyinOptions =
@@ -852,38 +806,24 @@ fun KeyboardView(
                     if (isT9Layout && t9Controller.leftPanelState ==
                         T9InputController.LeftPanelState.SELECTION
                     ) t9Controller.firstOptions.indexOf(t9Controller.selectedOption) else -1
-                // 展开页展示全量候选；行分组按字符当量估算，仅作展示分组
-                val rowWidthUnits = with(LocalDensity.current) {
-                    ExpandedCandidatePager.rowWidthUnits(
-                        screenWidthPx = LocalConfiguration.current.screenWidthDp.dp.toPx(),
-                        density = density,
-                        scaledDensity = density * fontScale
-                    )
-                }
-                val candidateRows = remember(
-                    allExpanded, singleCharFilter, rowWidthUnits
-                ) {
-                    ExpandedCandidatePager.flowRows(
-                        ExpandedCandidatePager.filterIndices(allExpanded, singleCharFilter),
-                        allExpanded,
-                        rowWidthUnits
-                    ).map { row ->
-                        row.map { gi ->
-                            CandidateEntry(allExpanded[gi].text, allExpanded[gi].comment, gi)
-                        }
+                // 仅过滤并保留引擎索引；换行在候选区测得实际可用宽度后进行。
+                val expandedEntries = remember(allExpanded, singleCharFilter) {
+                    ExpandedCandidatePager.filterIndices(allExpanded, singleCharFilter).map { gi ->
+                        CandidateEntry(allExpanded[gi].text, allExpanded[gi].comment, gi)
                     }
                 }
                 CandidatePage(
                     state = CandidatePageState(
-                        candidateRows = candidateRows,
+                        candidates = expandedEntries,
                         associationCandidates = candidateState.value.associationCandidates.toList(),
                         backgroundColor = keyboardBgColor,
                         textColor = candidateTextColor,
                         keyBackgroundColor = keyBgColor,
-                        bottomPaddingDp = state.keyboardBottomPaddingDp,
+                        bottomPaddingDp = renderedBottomPaddingDp,
                         singleCharFilter = singleCharFilter,
                         railSymbols = customRailSymbols.orEmpty(),
-                        leftRailWidthDp = t9RailWidthDp,
+                        matchT9Rail = isT9Layout && !isLandscape,
+                        leftRailHorizontalInsetDp = kbKey.spacingFor("t9").first ?: 2f,
                         leftRailInsetDp = t9RailInsetDp,
                         railPinyinOptions = railPinyinOptions,
                         railSelectedPinyinIndex = railSelectedPinyinIndex,
@@ -1150,8 +1090,8 @@ fun KeyboardView(
                                 onHandwritingLookupExit = { isHandwritingLookup = false },
                                 t9Controller = t9Controller,
                             )
-                            if (state.keyboardBottomPaddingDp > 0) {
-                                Spacer(modifier = Modifier.height(state.keyboardBottomPaddingDp.dp))
+                            if (renderedBottomPaddingDp > 0) {
+                                Spacer(modifier = Modifier.height(renderedBottomPaddingDp.dp))
                             }
                         }
                     }
@@ -1193,8 +1133,8 @@ fun KeyboardView(
                             specialKeyTextColor = specialKeyTextColor,
                             modifier = Modifier.weight(1f),
                         )
-                        if (state.keyboardBottomPaddingDp > 0) {
-                            Spacer(modifier = Modifier.height(state.keyboardBottomPaddingDp.dp))
+                        if (renderedBottomPaddingDp > 0) {
+                            Spacer(modifier = Modifier.height(renderedBottomPaddingDp.dp))
                         }
                     }
 
@@ -1298,8 +1238,8 @@ fun KeyboardView(
                     )
 
                 }
-                if (state.keyboardBottomPaddingDp > 0) {
-                    Spacer(Modifier.height(state.keyboardBottomPaddingDp.dp))
+                if (renderedBottomPaddingDp > 0) {
+                    Spacer(Modifier.height(renderedBottomPaddingDp.dp))
                 }
             }
             } // candidatePageExpanded else
@@ -1451,7 +1391,8 @@ fun KeyboardView(
                     )
                     is OverlayRoute.SchemaList -> SchemaListView(
                         onReorderSchemas = callbacks.onReorderSchemas,
-                        schemas = com.kingzcheung.xime.settings.InputModes.available(state.schemas),
+                        schemas = com.kingzcheung.xime.settings.InputModes.inCurrentLanguage(state.schemas,
+                            com.kingzcheung.xime.settings.InputModes.selectedId(state.currentSchemaId, state.isAsciiMode)),
                         currentSchemaId = com.kingzcheung.xime.settings.InputModes.selectedId(state.currentSchemaId, state.isAsciiMode),
                         backgroundColor = keyboardBgColor,
                         accentColor = accentColor,
@@ -1479,7 +1420,7 @@ fun KeyboardView(
                         onSplitWords = { text, _ -> viewModel.pushOverlay(OverlayRoute.SplitWords(text)) },
                         onBack = { viewModel.closeOverlay() },
                         onClipboardTabChange = { viewModel.pushOverlay(OverlayRoute.Clipboard(it)) },
-                        bottomPaddingDp = state.keyboardBottomPaddingDp,
+                        bottomPaddingDp = renderedBottomPaddingDp,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(),
                         onQuickSendAddClick = {
                             viewModel.closeOverlay()
@@ -1501,7 +1442,7 @@ fun KeyboardView(
                         keyBgColor = keyBgColor,
                         onUpdateToolbarButtons = callbacks.onUpdateToolbarButtons,
                         onDismiss = { viewModel.closeOverlay() },
-                        bottomPaddingDp = state.keyboardBottomPaddingDp,
+                        bottomPaddingDp = renderedBottomPaddingDp,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight()
                     )
                     is OverlayRoute.Edit -> {
@@ -1521,7 +1462,7 @@ fun KeyboardView(
                             textColor = keyTextColor,
                             accentColor = accentColor,
                             keyBgColor = keyBgColor,
-                            bottomPaddingDp = state.keyboardBottomPaddingDp,
+                            bottomPaddingDp = renderedBottomPaddingDp,
                             keyCornerRadius = kbKey.cornerRadius.dp,
                             shadowEnabled = kbShadow.enabled,
                             shadowElevation = kbShadow.elevation.dp,
@@ -1543,7 +1484,7 @@ fun KeyboardView(
                         backgroundColor = keyboardBgColor,
                         textColor = keyTextColor,
                         accentColor = accentColor,
-                        bottomPaddingDp = state.keyboardBottomPaddingDp,
+                        bottomPaddingDp = renderedBottomPaddingDp,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(),
                         onHapticFeedback = onHapticFeedback,
                     )
@@ -1567,7 +1508,7 @@ fun KeyboardView(
                         textColor = keyTextColor,
                         accentColor = accentColor,
                         keyBgColor = keyBgColor,
-                        bottomPaddingDp = state.keyboardBottomPaddingDp,
+                        bottomPaddingDp = renderedBottomPaddingDp,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(),
                         onHapticFeedback = onHapticFeedback,
                     )
@@ -1579,7 +1520,7 @@ fun KeyboardView(
                         onNavigateToQuickSend = { viewModel.pushOverlay(OverlayRoute.Clipboard(1)) },
                         onSelectChar = { char -> callbacks.onCommitText?.invoke(char) },
                         onDeleteText = { count -> callbacks.onDeleteText?.invoke(count) },
-                        bottomPaddingDp = state.keyboardBottomPaddingDp,
+                        bottomPaddingDp = renderedBottomPaddingDp,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight()
                     )
                     is OverlayRoute.ToolPanel -> InfoPanel(
@@ -1591,7 +1532,7 @@ fun KeyboardView(
                         textColor = keyTextColor,
                         accentColor = accentColor,
                         itemBgColor = keyBgColor,
-                        bottomPaddingDp = state.keyboardBottomPaddingDp,
+                        bottomPaddingDp = renderedBottomPaddingDp,
                         onClose = { callbacks.onToolPanelClose?.invoke() },
                         onAction = { actionId -> callbacks.onToolPanelAction?.invoke(actionId) },
                         onItemClick = { item -> callbacks.onToolPanelItemClick?.invoke(item) },

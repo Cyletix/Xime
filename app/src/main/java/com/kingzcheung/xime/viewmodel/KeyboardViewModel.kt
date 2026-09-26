@@ -86,6 +86,8 @@ data class KeyboardUiState(
     val resizePreviewWidthDp: Int = 0,
     /** 已保存的悬浮宽度（dp）；0 = 未设置，按高度推导。 */
     val floatingWidthDp: Int = 0,
+    val fixedWidthDp: Int = 0,
+    val fixedOffsetX: Int = 0,
     val t9ResetSignal: Long = 0L,
     val swipeCancelEpoch: Long = 0L,
     val t9RightCandidateSelectedCount: Long = 0L,

@@ -50,7 +50,8 @@ class ResizeTransactionImeTest {
         "keyboard_height_dp", "keyboard_height_dp_landscape", "keyboard_bottom_padding_dp",
         "keyboard_opacity", "keyboard_opacity_landscape", "floating_mode", "floating_mode_landscape",
         "floating_offset_x", "floating_offset_y", "floating_offset_x_landscape", "floating_offset_y_landscape",
-        "landscape_layout_v2")
+        "landscape_layout_v2", "fixed_width_dp", "fixed_width_dp_landscape",
+        "fixed_offset_x", "fixed_offset_x_landscape")
     private var savedPrefs: Map<String, Any?> = emptyMap()
     private var initialHeight = 0
     private var initialOpacity = 1f
@@ -145,20 +146,7 @@ class ResizeTransactionImeTest {
     }
 
     private fun chooseMode(id: String) {
-        val globe = rule.onAllNodesWithTag("language-key-control", useUnmergedTree = true).onLast()
-        globe.performTouchInput { down(Offset(width / 2f, 4f)) }
-        rule.waitUntil(3000) { rule.onAllNodesWithTag("language-schema:$id").fetchSemanticsNodes().isNotEmpty() }
-        val choice = rule.onNodeWithTag("language-schema:$id", useUnmergedTree = true).performScrollTo().fetchSemanticsNode()
-        val key = globe.fetchSemanticsNode()
-        globe.performTouchInput {
-            moveTo(choice.positionOnScreen + Offset(choice.size.width / 2f, choice.size.height / 2f) - key.positionOnScreen)
-            up()
-        }
-        rule.waitUntil(10_000) {
-            if (id == InputModes.ENGLISH) engine.isAsciiMode()
-            else engine.getCurrentSchema() == id && !engine.isAsciiMode()
-        }
-        rule.waitForIdle()
+        rule.chooseModeThroughLanguageAndPanel(id)
     }
 
     @Test fun cancelRestoresSplitAndSavedGeometryAfterLivePreview() {
@@ -201,6 +189,49 @@ class ResizeTransactionImeTest {
         shell("input keyevent KEYCODE_BACK")
         rule.waitUntil(5000) { rule.onAllNodesWithTag("keyboard-resize-split-button").fetchSemanticsNodes().isEmpty() }
         assertTrue("cancel a later transaction must preserve previously confirmed split", SettingsPreferences.isSplitKeyboardEnabled(context))
+    }
+
+    @Test fun fixedWidthAndAlignmentSurviveHideAndCancel() {
+        chooseMode(InputModes.ENGLISH)
+        rule.onNodeWithContentDescription("键盘调节").performClick()
+        val before = rule.onNodeWithTag("fixed-keyboard-resize-preview").fetchSemanticsNode().boundsInRoot
+        val frame = rule.onNodeWithTag("keyboard-resize-frame", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        rule.onNodeWithTag("keyboard-resize-frame", useUnmergedTree = true).performTouchInput {
+            val right = before.right - frame.left - 4f
+            val middle = before.center.y - frame.top
+            swipe(Offset(right, middle), Offset(right - before.width * .25f, middle), 400)
+        }
+        rule.onNodeWithTag("keyboard-resize-fixed-move-bar", useUnmergedTree = true).performTouchInput {
+            swipe(center, center + Offset(before.width * .3f, 0f), 400)
+        }
+        val expected = rule.onNodeWithTag("fixed-keyboard-resize-preview").fetchSemanticsNode().boundsInRoot
+        assertTrue(expected.width < before.width - 20f)
+        rule.onNodeWithContentDescription("确认").performClick()
+        rule.waitUntil(5000) { rule.onAllNodesWithTag("keyboard-resize-frame", useUnmergedTree = true).fetchSemanticsNodes().isEmpty() }
+        assertFalse(SettingsPreferences.isFloatingMode(context, landscape))
+        val savedWidth = SettingsPreferences.getFixedWidthDp(context, landscape)
+        val savedX = SettingsPreferences.getFixedOffsetX(context, landscape)
+        assertTrue(savedWidth > 0)
+        fun assertActual() {
+            val actual = rule.onNodeWithTag("fixed-keyboard-card").fetchSemanticsNode().boundsInRoot
+            assertEquals(expected.width, actual.width, 3f)
+            assertEquals(expected.left, actual.left, 3f)
+        }
+        assertActual()
+        rule.runOnUiThread { inputMethodManager.hideSoftInputFromWindow(editor.windowToken, 0) }
+        instrumentation.waitForIdleSync()
+        rule.runOnUiThread { editor.requestFocus(); inputMethodManager.showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT) }
+        rule.waitUntil(5000) { rule.onAllNodesWithTag("language-key-control", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        assertActual()
+        rule.onNodeWithContentDescription("键盘调节").performClick()
+        rule.onNodeWithTag("keyboard-resize-fixed-move-bar", useUnmergedTree = true).performTouchInput {
+            swipe(center, center - Offset(before.width * .3f, 0f), 400)
+        }
+        shell("input keyevent KEYCODE_BACK")
+        rule.waitUntil(5000) { rule.onAllNodesWithTag("keyboard-resize-frame", useUnmergedTree = true).fetchSemanticsNodes().isEmpty() }
+        assertActual()
+        assertEquals(savedWidth, SettingsPreferences.getFixedWidthDp(context, landscape))
+        assertEquals(savedX, SettingsPreferences.getFixedOffsetX(context, landscape))
     }
 
     private fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(

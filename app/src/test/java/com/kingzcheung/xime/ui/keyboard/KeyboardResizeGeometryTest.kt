@@ -2,6 +2,7 @@ package com.kingzcheung.xime.ui.keyboard
 
 import androidx.compose.ui.geometry.Offset
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -11,6 +12,17 @@ import org.junit.Test
  * 两边一起动（看起来像整体缩放），而且调节框由屏幕宽度和偏移另算，和真实卡片边界对不上。
  */
 class KeyboardResizeGeometryTest {
+
+    @Test fun fixedWidthAndPositionPreserveBottomInsetsAcrossHostHeights() {
+        val normal = fixedKeyboardRect(1000f, 400f, 300f, 20f, 24f, 400f, 300f)
+        val preview = fixedKeyboardRect(1000f, 900f, 300f, 20f, 24f, 400f, 300f)
+        assertEquals(600f, normal.left, 0.01f)
+        assertEquals(1000f, normal.right, 0.01f)
+        assertEquals(normal.width, preview.width, 0.01f)
+        assertEquals(normal.height, preview.height, 0.01f)
+        assertEquals(24f, 900f - preview.bottom, 0.01f)
+        assertEquals(0f, fixedKeyboardRect(360f, 400f, 300f, 0f, 24f, 800f, -300f).left, 0.01f)
+    }
 
     private val bounds = ResizeRect(0f, 0f, 1000f, 800f)
     private val start = ResizeRect(100f, 100f, 700f, 500f)
@@ -110,15 +122,17 @@ class KeyboardResizeGeometryTest {
         assertEquals(ResizeHandle.RIGHT, resizeHandleAt(card, Offset(840f, 200f), 28f, true))
         assertEquals(ResizeHandle.TOP_LEFT, resizeHandleAt(card, Offset(154f, 4f), 28f, true))
         assertEquals(ResizeHandle.BOTTOM_RIGHT, resizeHandleAt(card, Offset(846f, 396f), 28f, true))
+        assertEquals(ResizeHandle.BOTTOM_LEFT, resizeHandleAt(card, Offset(154f, 396f), 28f, true))
+        assertEquals(ResizeHandle.NONE, resizeHandleAt(card, Offset(500f, 396f), 28f, true))
         // 卡片外不是手柄：留给"拖动移动位置"
         assertEquals(ResizeHandle.NONE, resizeHandleAt(card, Offset(20f, 200f), 28f, true))
         assertEquals(ResizeHandle.NONE, resizeHandleAt(card, Offset(600f, 200f), 28f, true))
 
-        // 固定键盘：只有上下边，角退化为上下边，中间与左右边缘都不是手柄
+        // 固定键盘也支持宽度与角手柄，中间仍不是缩放手柄
         val full = ResizeRect(0f, 0f, 1000f, 400f)
-        assertEquals(ResizeHandle.TOP, resizeHandleAt(full, Offset(4f, 4f), 28f, false))
-        assertEquals(ResizeHandle.BOTTOM, resizeHandleAt(full, Offset(996f, 396f), 28f, false))
-        assertEquals(ResizeHandle.NONE, resizeHandleAt(full, Offset(2f, 200f), 28f, false))
+        assertEquals(ResizeHandle.TOP_LEFT, resizeHandleAt(full, Offset(4f, 4f), 28f, false))
+        assertEquals(ResizeHandle.BOTTOM_RIGHT, resizeHandleAt(full, Offset(996f, 396f), 28f, false))
+        assertEquals(ResizeHandle.LEFT, resizeHandleAt(full, Offset(2f, 200f), 28f, false))
         assertEquals(ResizeHandle.NONE, resizeHandleAt(full, Offset(500f, 200f), 28f, false))
     }
 
@@ -189,18 +203,55 @@ class KeyboardResizeGeometryTest {
 
     @Test
     fun `悬浮宽度：设置值优先 未设置按高度推导`() {
-        assertEquals(260, keyboardWidthBounds(800).first)
+        assertEquals(FLOATING_RESIZE_MIN_WIDTH_DP, keyboardWidthBounds(800).first)
         assertEquals(800, keyboardWidthBounds(800).last)
         // 屏宽小于下限时上限跟着收紧，不产生空区间
         assertEquals(240, keyboardWidthBounds(240).first)
         assertEquals(240, keyboardWidthBounds(240).last)
         assertEquals(700, resolvedFloatingWidth(800, 600, 300, 300, false, overrideWidth = 700))
         assertEquals(800, resolvedFloatingWidth(800, 600, 300, 300, false, overrideWidth = 9999))
-        assertEquals(260, resolvedFloatingWidth(800, 600, 300, 300, false, overrideWidth = 10))
+        assertEquals(FLOATING_RESIZE_MIN_WIDTH_DP, resolvedFloatingWidth(800, 600, 300, 300, false, overrideWidth = 10))
         // 0 = 未设置 → 与旧的高度推导完全一致
         assertEquals(
             floatingKeyboardWidth(800, 600, 300, 300, false),
             resolvedFloatingWidth(800, 600, 300, 300, false, overrideWidth = 0),
         )
+    }
+
+    @Test
+    fun `最小尺寸：手机基准与可用区域取小`() {
+        // 契约：手机基准不低于 360×220，横屏不放宽；具体取值允许按需调大
+        assertTrue(FLOATING_RESIZE_MIN_WIDTH_DP >= 360)
+        assertTrue(FLOATING_RESIZE_MIN_HEIGHT_DP >= 220)
+        assertEquals(FLOATING_RESIZE_MIN_WIDTH_DP, floatingResizeMinWidthDp(1000))
+        assertEquals(FLOATING_RESIZE_MIN_HEIGHT_DP, floatingResizeMinHeightDp(800))
+        // 可用区比基准还小时取可用区，不产生越界初值
+        assertEquals(280, floatingResizeMinWidthDp(280))
+        assertEquals(180, floatingResizeMinHeightDp(180))
+    }
+
+    @Test
+    fun `横屏高度下限不再随方向放宽`() {
+        // 旧实现横屏下限 130，比竖屏还小；现在两个方向共用同一手机基准
+        assertEquals(FLOATING_RESIZE_MIN_HEIGHT_DP, floatingResizeHeightBounds(360, landscape = true).first)
+        assertEquals(FLOATING_RESIZE_MIN_HEIGHT_DP, floatingResizeHeightBounds(900, landscape = false).first)
+        // 上限仍按屏幕比例收窄，但不低于下限
+        assertEquals(FLOATING_RESIZE_MIN_HEIGHT_DP, floatingResizeHeightBounds(200, landscape = true).last)
+    }
+
+    @Test
+    fun `四角对角线提示在角内侧且只做视觉`() {
+        val frame = ResizeRect(100f, 50f, 900f, 450f)
+        val lines = resizeCornerDiagonals(frame, lengthPx = 24f, insetPx = 12f)
+        assertEquals(4, lines.size)
+        // ↖ 与 ↘ 沿角平分线向内，端点到角点距离相同
+        assertEquals(Offset(112f, 62f), lines[0].first)
+        assertEquals(Offset(136f, 86f), lines[0].second)
+        assertEquals(Offset(888f, 62f), lines[1].first)
+        assertEquals(Offset(864f, 86f), lines[1].second)
+        assertEquals(Offset(112f, 438f), lines[2].first)
+        assertEquals(Offset(136f, 414f), lines[2].second)
+        assertEquals(Offset(888f, 438f), lines[3].first)
+        assertEquals(Offset(864f, 414f), lines[3].second)
     }
 }

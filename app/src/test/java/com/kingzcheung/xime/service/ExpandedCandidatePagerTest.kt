@@ -1,6 +1,7 @@
 package com.kingzcheung.xime.service
 
 import com.kingzcheung.xime.rime.RimeCandidate
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -98,5 +99,16 @@ class ExpandedCandidatePagerTest {
         val rows = ExpandedCandidatePager.flowRows(filtered, all, 4f)
         // 过滤后全局索引 0、2：估算 1.2+1=2.2 单位/条，容量 4 装不下第二条 → 各占一行
         assertEquals(listOf(listOf(0), listOf(2)), rows)
+    }
+    @Test fun actualContentWidthAndFontScaleControlRowCapacity() {
+        val all = List(30) { candidate("那", "na") }
+        fun rows(width: Float, scale: Float) = ExpandedCandidatePager.flowRows(
+            all.indices.toList(), all, ExpandedCandidatePager.rowWidthUnits(width, scale))
+        val narrow = rows(180f, 1f)
+        val wide = rows(540f, 1f)
+        assertTrue(wide.first().size > narrow.first().size)
+        assertTrue(rows(180f, 1.5f).first().size < narrow.first().size)
+        assertEquals(all.indices.toList(), narrow.flatten())
+        assertEquals(1, rows(20f, 1f).first().size)
     }
 }

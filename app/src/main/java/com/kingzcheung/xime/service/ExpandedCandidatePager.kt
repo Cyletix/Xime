@@ -25,12 +25,9 @@ object ExpandedCandidatePager {
         return units
     }
 
-    /**
-     * 展开区行容量（字符当量）：可用宽度 ≈ 屏宽 - 左右栏/分隔/内边距合计约 140dp，
-     * 以 18sp 主字号为 1 单位。
-     */
-    fun rowWidthUnits(screenWidthPx: Float, density: Float, scaledDensity: Float): Float =
-        ((screenWidthPx - 140f * density) / (18f * scaledDensity)).coerceAtLeast(8f)
+    /** 中间候选区的实际宽度（已扣除侧栏和间距），以 18sp 字宽为一单位。 */
+    fun rowWidthUnits(contentWidthPx: Float, scaledDensity: Float): Float =
+        (contentWidthPx / (18f * scaledDensity)).coerceAtLeast(1f)
 
     /**
      * 按字符当量估算贪心分行。分行仅作展示分组：估算偏差只改变每行词数，

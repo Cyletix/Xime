@@ -9,9 +9,9 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -60,6 +60,8 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kingzcheung.xime.rime.RimeCandidate
+import com.kingzcheung.xime.service.ExpandedCandidatePager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
@@ -75,12 +77,12 @@ data class CandidateEntry(
 /**
  * 候选展开页数据。
  *
- * @param candidateRows 行分组的候选（行分组仅作展示分组）
+ * @param candidates 按引擎顺序排列的候选，实际换行由中间区域的测量宽度决定
  * @param keyBackgroundColor 左右两栏按键底色（键盘按键色）；[Color.Unspecified] 时
  *                          用 textColor 半透明兜底，保证单独预览时也不失形。
  */
 data class CandidatePageState(
-    val candidateRows: List<List<CandidateEntry>> = emptyList(),
+    val candidates: List<CandidateEntry> = emptyList(),
     val associationCandidates: List<String> = emptyList(),
     val backgroundColor: Color,
     val textColor: Color,
@@ -90,9 +92,9 @@ data class CandidatePageState(
     val singleCharFilter: Boolean = false,
     /** 左栏符号列表（九键/笔画复刻各自键盘左栏的 side_symbols）；空=通用快捷符号 */
     val railSymbols: List<String> = emptyList(),
-    /** 左栏宽度 dp（九键对齐其键盘左栏：(屏宽-4)×0.8/5，与其 weight 分配同公式）；
-     *  0=默认固定宽度 */
-    val leftRailWidthDp: Int = 0,
+    /** 九键侧栏按本面板宽度对齐键盘，不按设备屏幕宽度计算。 */
+    val matchT9Rail: Boolean = false,
+    val leftRailHorizontalInsetDp: Float = 2f,
     /** 左栏垂直缩进 dp（九键对齐其左栏面板 keySpacingY，默认 6=原 Row 垂直边距，
      *  保证展开/收起切换时左栏顶部位置不跳跃） */
     val leftRailInsetDp: Int = 6,
@@ -166,11 +168,6 @@ fun CandidatePage(
     // 九键输入/选择态：左栏显示音节拼音候选（与键盘左栏同源同点击）；空闲态回落符号列表
     val railItems = state.railPinyinOptions.ifEmpty { railSymbols }
     val isPinyinRail = state.railPinyinOptions.isNotEmpty()
-    // 左栏宽度：九键对齐其键盘左栏（宿主按同公式给的 dp 值），其余布局用固定宽度
-    val railWidthModifier = if (state.leftRailWidthDp > 0)
-        Modifier.fillMaxHeight().width(state.leftRailWidthDp.dp)
-    else Modifier.fillMaxHeight().width(leftRailWidth)
-
     // 中间候选区滚动；翻页 = 滚动一屏
     val listState = rememberLazyListState()
     var viewportHeightPx by remember { mutableIntStateOf(0) }
@@ -181,8 +178,8 @@ fun CandidatePage(
             scrollScope.launch { listState.animateScrollBy(direction.toFloat() * viewport) }
         }
     }
-    // 候选内容变化（新输入/切过滤/删词）回到顶部（列表实例每次重组都新建，用哈希做键）
-    LaunchedEffect(state.candidateRows.hashCode()) {
+    // 候选内容变化（新输入/切过滤/删词）回到顶部（宽度变化只重排，不重置滚动）
+    LaunchedEffect(state.candidates) {
         listState.scrollToItem(0)
     }
     // 硬件键盘 DPAD 上/下的翻页联动
@@ -190,59 +187,41 @@ fun CandidatePage(
         pageScrollEvents?.collect { direction -> scrollPage(direction) }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(state.backgroundColor)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                // 垂直边距下放各栏：左栏用 leftRailInsetDp（九键对其键盘左栏面板的
-                // keySpacingY 缩进，切换展开/收起时左栏不跳位），中/右栏保持 6dp 原视觉
-                .padding(horizontal = 8.dp)
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val resolvedRailWidth = if (state.matchT9Rail) {
+            ((maxWidth - 12.dp) * 0.16f - state.leftRailHorizontalInsetDp.dp * 2f)
+                .coerceIn(32.dp, maxOf(32.dp, maxWidth * 0.24f))
+        } else leftRailWidth
+        val railWidthModifier = Modifier.fillMaxHeight().width(resolvedRailWidth).testTag("candidate-left-rail")
+        Column(
+            modifier = Modifier.fillMaxSize()
+                .background(state.backgroundColor)
         ) {
-            // ── 左栏：九键为音节拼音候选（输入/选择态）或 side_symbols（空闲态，
-            // 连体键——首尾圆角、中间直角，对齐数字键盘左栏）+ 候选/单字切换（下）。
-            // 条目 ≤4 均分填满；>4 最多显示 4 条、LazyColumn 滚动（对齐九键左栏）──
-            Column(
-                modifier = railWidthModifier
-                    .padding(vertical = state.leftRailInsetDp.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    // 垂直边距下放各栏：左栏用 leftRailInsetDp（九键对其键盘左栏面板的
+                    // keySpacingY 缩进，切换展开/收起时左栏不跳位），中/右栏保持 6dp 原视觉
+                    .padding(horizontal = 8.dp)
             ) {
-                var railListHeightPx by remember { mutableIntStateOf(0) }
+                // ── 左栏：九键为音节拼音候选（输入/选择态）或 side_symbols（空闲态，
+                // 连体键——首尾圆角、中间直角，对齐数字键盘左栏）+ 候选/单字切换（下）。
+                // 条目 ≤4 均分填满；>4 最多显示 4 条、LazyColumn 滚动（对齐九键左栏）──
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(3f)
-                        .onSizeChanged { railListHeightPx = it.height }
+                    modifier = railWidthModifier
+                        .padding(vertical = state.leftRailInsetDp.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    if (railItems.size <= 4) {
-                        railItems.forEachIndexed { index, item ->
-                            CandidateRailSymbolKey(
-                                text = item,
-                                onClick = {
-                                    if (isPinyinRail) callbacks.onRailPinyinSelect?.invoke(index)
-                                    else callbacks.onCommitText?.invoke(item)
-                                },
-                                keyBg = keyBg,
-                                textColor = state.textColor,
-                                modifier = Modifier.weight(1f),
-                                isFirst = index == 0,
-                                isLast = index == railItems.lastIndex,
-                                isSelected = isPinyinRail && index == state.railSelectedPinyinIndex,
-                                accentColor = state.railAccentColor,
-                                isPinyin = isPinyinRail
-                            )
-                        }
-                    } else {
-                        // 每条高 = 列表区高/4（视口恰好显示 4 条），超出滚动查看
-                        val itemHeightDp = with(LocalDensity.current) {
-                            (railListHeightPx / 4).coerceAtLeast(1).toDp()
-                        }
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            itemsIndexed(railItems) { index, item ->
+                    var railListHeightPx by remember { mutableIntStateOf(0) }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(3f)
+                            .onSizeChanged { railListHeightPx = it.height }
+                    ) {
+                        if (railItems.size <= 4) {
+                            railItems.forEachIndexed { index, item ->
                                 CandidateRailSymbolKey(
                                     text = item,
                                     onClick = {
@@ -251,7 +230,7 @@ fun CandidatePage(
                                     },
                                     keyBg = keyBg,
                                     textColor = state.textColor,
-                                    modifier = Modifier.height(itemHeightDp),
+                                    modifier = Modifier.weight(1f),
                                     isFirst = index == 0,
                                     isLast = index == railItems.lastIndex,
                                     isSelected = isPinyinRail && index == state.railSelectedPinyinIndex,
@@ -259,192 +238,215 @@ fun CandidatePage(
                                     isPinyin = isPinyinRail
                                 )
                             }
-                        }
-                    }
-                }
-                RailKey(
-                    onClick = { callbacks.onToggleSingleCharFilter?.invoke() },
-                    keyBg = if (state.singleCharFilter) state.textColor.copy(alpha = 0.28f) else keyBg,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    // 显示当前模式：候选（全部）/ 单字（筛选中，高亮底色）
-                    Text(
-                        text = if (state.singleCharFilter) "单字" else "候选",
-                        color = state.textColor,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Normal,
-                        maxLines = 1
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(6.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(1.dp)
-                    .background(dividerColor)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // ── 中间：候选行分组列表（LazyColumn 只渲染可见行），联想词在末尾
-            // 随内容一并滚动 ──
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .onSizeChanged { viewportHeightPx = it.height }
-                    .testTag("expanded-candidates"),
-                state = listState,
-                contentPadding = PaddingValues(vertical = 6.dp)
-            ) {
-                itemsIndexed(
-                    state.candidateRows,
-                    key = { _, row -> row.first().globalIndex },
-                    contentType = { _, _ -> "candidateRow" }
-                ) { _, row ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(IntrinsicSize.Min)
-                    ) {
-                        row.forEachIndexed { colIndex, entry ->
-                            if (colIndex > 0) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(1.dp)
-                                        .fillMaxHeight(0.6f)
-                                        .align(Alignment.CenterVertically)
-                                        .background(dividerColor)
-                                )
+                        } else {
+                            // 每条高 = 列表区高/4（视口恰好显示 4 条），超出滚动查看
+                            val itemHeightDp = with(LocalDensity.current) {
+                                (railListHeightPx / 4).coerceAtLeast(1).toDp()
                             }
-                            CandidatePageItem(
-                                entry = entry,
-                                onClick = { callbacks.onCandidateSelect(entry) },
-                                onLongClick = { callbacks.onCandidateLongPress?.invoke(entry) },
-                                textColor = state.textColor,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                }
-
-                if (state.associationCandidates.isNotEmpty()) {
-                    item(key = "assoc") {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(1.dp)
-                                    .background(dividerColor)
-                            )
-                            FlexRow(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalSpacing = 6.dp,
-                                verticalSpacing = 6.dp
-                            ) {
-                                state.associationCandidates.forEachIndexed { index, candidate ->
-                                    if (index > 0) FlexRowDivider(dividerColor)
-                                    CandidatePageItem(
-                                        entry = CandidateEntry(text = candidate),
-                                        onClick = { callbacks.onAssociationSelect?.invoke(index) },
-                                        textColor = state.textColor
+                            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                itemsIndexed(railItems) { index, item ->
+                                    CandidateRailSymbolKey(
+                                        text = item,
+                                        onClick = {
+                                            if (isPinyinRail) callbacks.onRailPinyinSelect?.invoke(index)
+                                            else callbacks.onCommitText?.invoke(item)
+                                        },
+                                        keyBg = keyBg,
+                                        textColor = state.textColor,
+                                        modifier = Modifier.height(itemHeightDp),
+                                        isFirst = index == 0,
+                                        isLast = index == railItems.lastIndex,
+                                        isSelected = isPinyinRail && index == state.railSelectedPinyinIndex,
+                                        accentColor = state.railAccentColor,
+                                        isPinyin = isPinyinRail
                                     )
                                 }
                             }
                         }
                     }
+                    RailKey(
+                        onClick = { callbacks.onToggleSingleCharFilter?.invoke() },
+                        keyBg = if (state.singleCharFilter) state.textColor.copy(alpha = 0.28f) else keyBg,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        // 显示当前模式：候选（全部）/ 单字（筛选中，高亮底色）
+                        Text(
+                            text = if (state.singleCharFilter) "单字" else "候选",
+                            color = state.textColor,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Normal,
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(1.dp)
+                        .background(dividerColor)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // ── 中间：候选行分组列表（LazyColumn 只渲染可见行），联想词在末尾
+                // 随内容一并滚动 ──
+                BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
+                    val rowWidthUnits = with(LocalDensity.current) {
+                        ExpandedCandidatePager.rowWidthUnits(maxWidth.toPx(), density * fontScale)
+                    }
+                    val candidateRows = remember(state.candidates, rowWidthUnits) {
+                        val all = state.candidates.map { RimeCandidate(it.text, it.comment) }
+                        ExpandedCandidatePager.flowRows(all.indices.toList(), all, rowWidthUnits)
+                            .map { row -> row.map { state.candidates[it] } }
+                    }
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize()
+                            .onSizeChanged { viewportHeightPx = it.height }
+                            .testTag("expanded-candidates"),
+                        state = listState,
+                        contentPadding = PaddingValues(vertical = 6.dp)
+                    ) {
+                        itemsIndexed(
+                            candidateRows,
+                            // Reflow changes row membership; do not reuse a cached row by its first word alone.
+                            key = { _, row -> row.joinToString(",") { it.globalIndex.toString() } },
+                            contentType = { _, _ -> "candidateRow" }
+                        ) { _, row ->
+                            // 估算只负责惰性分组；最终按真实文字宽度分配空间，长短词不会等分挤压。
+                            FlexRow(Modifier.fillMaxWidth(), horizontalSpacing = 6.dp, verticalSpacing = 0.dp) {
+                                row.forEachIndexed { colIndex, entry ->
+                                    if (colIndex > 0) FlexRowDivider(dividerColor)
+                                    CandidatePageItem(
+                                        entry = entry,
+                                        onClick = { callbacks.onCandidateSelect(entry) },
+                                        onLongClick = { callbacks.onCandidateLongPress?.invoke(entry) },
+                                        textColor = state.textColor,
+                                        modifier = Modifier.testTag("expanded-candidate:${entry.globalIndex}")
+                                    )
+                                }
+                            }
+                        }
+
+                        if (state.associationCandidates.isNotEmpty()) {
+                            item(key = "assoc") {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(1.dp)
+                                            .background(dividerColor)
+                                    )
+                                    FlexRow(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalSpacing = 6.dp,
+                                        verticalSpacing = 6.dp
+                                    ) {
+                                        state.associationCandidates.forEachIndexed { index, candidate ->
+                                            if (index > 0) FlexRowDivider(dividerColor)
+                                            CandidatePageItem(
+                                                entry = CandidateEntry(text = candidate),
+                                                onClick = { callbacks.onAssociationSelect?.invoke(index) },
+                                                textColor = state.textColor
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // ── 右栏：退格 / 上一页 / 下一页 / 回车 ──
+                // 竖屏固定方块、垂直居中分布；横屏栏高有限改为等分压缩
+                val railKeyModifier = if (isLandscape) Modifier.weight(1f) else Modifier.size(46.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(rightRailWidth)
+                        .padding(vertical = 6.dp),
+                    verticalArrangement = if (isLandscape) Arrangement.spacedBy(4.dp)
+                    else Arrangement.spacedBy(10.dp, Alignment.CenterVertically)
+                ) {
+                    RailKey(
+                        onClick = { callbacks.onDelete?.invoke() },
+                        keyBg = keyBg,
+                        modifier = railKeyModifier,
+                        enabled = callbacks.onDelete != null
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Backspace,
+                            contentDescription = "退格",
+                            tint = state.textColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    RailKey(
+                        onClick = {
+                            onHapticFeedback?.invoke()
+                            scrollPage(-1)
+                        },
+                        keyBg = keyBg,
+                        modifier = railKeyModifier,
+                        enabled = listState.canScrollBackward
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.KeyboardArrowUp,
+                            contentDescription = "上一页",
+                            tint = if (listState.canScrollBackward) state.textColor else state.textColor.copy(alpha = 0.3f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    RailKey(
+                        onClick = {
+                            onHapticFeedback?.invoke()
+                            scrollPage(1)
+                        },
+                        keyBg = keyBg,
+                        modifier = railKeyModifier,
+                        enabled = listState.canScrollForward
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.KeyboardArrowDown,
+                            contentDescription = "下一页",
+                            tint = if (listState.canScrollForward) state.textColor else state.textColor.copy(alpha = 0.3f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    RailKey(
+                        onClick = { callbacks.onEnter?.invoke() },
+                        keyBg = keyBg,
+                        modifier = railKeyModifier,
+                        enabled = callbacks.onEnter != null
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardReturn,
+                            contentDescription = "回车",
+                            tint = state.textColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // ── 右栏：退格 / 上一页 / 下一页 / 回车 ──
-            // 竖屏固定方块、垂直居中分布；横屏栏高有限改为等分压缩
-            val railKeyModifier = if (isLandscape) Modifier.weight(1f) else Modifier.size(46.dp)
-            Column(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(rightRailWidth)
-                    .padding(vertical = 6.dp),
-                verticalArrangement = if (isLandscape) Arrangement.spacedBy(4.dp)
-                else Arrangement.spacedBy(10.dp, Alignment.CenterVertically)
-            ) {
-                RailKey(
-                    onClick = { callbacks.onDelete?.invoke() },
-                    keyBg = keyBg,
-                    modifier = railKeyModifier,
-                    enabled = callbacks.onDelete != null
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Backspace,
-                        contentDescription = "退格",
-                        tint = state.textColor,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                RailKey(
-                    onClick = {
-                        onHapticFeedback?.invoke()
-                        scrollPage(-1)
-                    },
-                    keyBg = keyBg,
-                    modifier = railKeyModifier,
-                    enabled = listState.canScrollBackward
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.KeyboardArrowUp,
-                        contentDescription = "上一页",
-                        tint = if (listState.canScrollBackward) state.textColor else state.textColor.copy(alpha = 0.3f),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                RailKey(
-                    onClick = {
-                        onHapticFeedback?.invoke()
-                        scrollPage(1)
-                    },
-                    keyBg = keyBg,
-                    modifier = railKeyModifier,
-                    enabled = listState.canScrollForward
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.KeyboardArrowDown,
-                        contentDescription = "下一页",
-                        tint = if (listState.canScrollForward) state.textColor else state.textColor.copy(alpha = 0.3f),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                RailKey(
-                    onClick = { callbacks.onEnter?.invoke() },
-                    keyBg = keyBg,
-                    modifier = railKeyModifier,
-                    enabled = callbacks.onEnter != null
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.KeyboardReturn,
-                        contentDescription = "回车",
-                        tint = state.textColor,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-        }
-
-        // 底部留白
-        Spacer(
-            modifier = Modifier.height(
-                if (isLandscape) 15.dp else state.bottomPaddingDp.dp
+            // 底部留白
+            Spacer(
+                modifier = Modifier.height(
+                    if (isLandscape) 15.dp else state.bottomPaddingDp.dp
+                )
             )
-        )
+        }
     }
 }
 
 /**
  * 候选条目：候选词与拼音注释拼进同一文本（注释用次级色 + 注释字体），
  * 字号固定不缩放，超宽时省略号截断。
- * 行内条目间竖分隔线：主候选区由行 Row 摆放（条目 weight 均分宽度），
- * 联想区仍由 FlexRow 摆放。
+ * 主候选与联想都按真实文字宽度流式排布，余量均分给条目。
  */
 @Composable
 private fun CandidatePageItem(
